@@ -471,15 +471,15 @@ export const notifications = sqliteTable('notifications', {
 
 export const subscriptions = sqliteTable('subscriptions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  userId: text('user_id').notNull().unique().references(() => user.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
   planId: text('plan_id').notNull(),
   status: text('status').notNull().default('pending'),
   currency: text('currency').notNull().default('GBP'),
   amount: integer('amount').notNull(),
   interval: text('interval').notNull().default('month'),
-  stripeCustomerId: text('stripe_customer_id').unique(),
-  stripeSubscriptionId: text('stripe_subscription_id').unique(),
-  stripeCheckoutSessionId: text('stripe_checkout_session_id').unique(),
+  stripeCustomerId: text('stripe_customer_id'),
+  stripeSubscriptionId: text('stripe_subscription_id'),
+  stripeCheckoutSessionId: text('stripe_checkout_session_id'),
   currentPeriodStart: integer('current_period_start', { mode: 'timestamp' }),
   currentPeriodEnd: integer('current_period_end', { mode: 'timestamp' }),
   cancelAtPeriodEnd: integer('cancel_at_period_end', { mode: 'boolean' }).notNull().default(false),
@@ -488,10 +488,28 @@ export const subscriptions = sqliteTable('subscriptions', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).$defaultFn(() => new Date()).notNull(),
 });
 
+// Legacy usage tracking table (kept for DB compatibility)
+export const usageTracking = sqliteTable('usage_tracking', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: text('user_id').notNull(),
+  feature: text('feature').notNull(),
+  count: integer('count').notNull().default(0),
+  lastUsedDate: text('last_used_date').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
 // Usage limits for free users — each feature tracked independently
 export const userUsageLimits = sqliteTable('user_usage_limits', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  userId: text('user_id').notNull().unique(),
+  userId: text('user_id').notNull(),
+
+  // ── Legacy grouped counters (kept for DB compatibility) ──
+  deepFeaturesCount: integer('deep_features_count').notNull().default(0),
+  deepFeaturesResetAt: text('deep_features_reset_at'),
+  outreachFeaturesCount: integer('outreach_features_count').notNull().default(0),
+  outreachFeaturesResetAt: text('outreach_features_reset_at'),
+  communityCount: integer('community_count').notNull().default(0),
 
   // ── Lifetime limits (no reset) ──
   // Assist features — limit 2 each
@@ -574,7 +592,7 @@ export const paymentMethods = sqliteTable('payment_methods', {
 // Freelancer Wallets — available and pending balance
 export const freelancerWallets = sqliteTable('freelancer_wallets', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  userId: text('user_id').notNull().unique().references(() => user.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
   availableBalance: integer('available_balance').notNull().default(0), // in pence
   pendingBalance: integer('pending_balance').notNull().default(0), // in pence (funds in escrow)
   totalEarned: integer('total_earned').notNull().default(0), // lifetime earnings
