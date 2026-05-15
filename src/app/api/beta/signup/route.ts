@@ -1,4 +1,4 @@
-import { sql, eq } from "drizzle-orm";
+import { sql, eq, inArray } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { betaSignups } from "@/db/schema";
@@ -48,10 +48,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return jsonError("This email is already registered for beta access.", 409);
     }
 
-    // Count current signups (atomic read)
+    // Count active/trialing signups only (exclude pending and canceled)
     const countResult = await db
       .select({ count: sql<number>`count(*)` })
-      .from(betaSignups);
+      .from(betaSignups)
+      .where(inArray(betaSignups.status, ["trialing", "active"]));
 
     const taken = Number(countResult[0]?.count ?? 0);
 

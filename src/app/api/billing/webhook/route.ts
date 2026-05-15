@@ -211,6 +211,39 @@ async function syncStripeSubscription({
     planFromSub?.id ?? planFromCheckout?.id ?? planIdFromSub ?? planIdFromCheckout ?? "basic";
   const effectivePlan = getBillingPlan(effectivePlanId) ?? null;
 
+  // Preserve existing founder metadata (betaSignup, signupOrder) if present
+  let mergedMetadata: Record<string, unknown> = {
+    stripeCustomerId: typeof stripeSubscription.customer === "string" ? stripeSubscription.customer : null,
+    stripeSubscriptionId: stripeSubscription.id,
+    stripeCheckoutSessionId: stripeCheckoutSessionId ?? null,
+    planId: effectivePlan?.id ?? effectivePlanId,
+    status: stripeSubscription.status,
+  };
+
+  try {
+    const existingSub = await db
+      .select({ metadata: subscriptions.metadata })
+      .from(subscriptions)
+      .where(eq(subscriptions.userId, userId))
+      .limit(1);
+
+    if (existingSub[0]?.metadata) {
+      const existingMeta =
+        typeof existingSub[0].metadata === "string"
+          ? JSON.parse(existingSub[0].metadata)
+          : existingSub[0].metadata;
+      if (existingMeta?.betaSignup) {
+        mergedMetadata = {
+          ...mergedMetadata,
+          betaSignup: true,
+          signupOrder: existingMeta.signupOrder,
+        };
+      }
+    }
+  } catch {
+    // ignore metadata read errors — proceed with Stripe-only metadata
+  }
+
   await persistSubscription({
     userId,
     planId: effectivePlan?.id ?? effectivePlanId,
@@ -227,13 +260,7 @@ async function syncStripeSubscription({
     currentPeriodStart: toDate(getSubscriptionPeriodStart(stripeSubscription)),
     currentPeriodEnd: toDate(getSubscriptionPeriodEnd(stripeSubscription)),
     cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end,
-    metadata: {
-      stripeCustomerId: typeof stripeSubscription.customer === "string" ? stripeSubscription.customer : null,
-      stripeSubscriptionId: stripeSubscription.id,
-      stripeCheckoutSessionId: stripeCheckoutSessionId ?? null,
-      planId: effectivePlan?.id ?? effectivePlanId,
-      status: stripeSubscription.status,
-    },
+    metadata: mergedMetadata,
   });
 }
 

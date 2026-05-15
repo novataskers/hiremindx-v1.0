@@ -1,4 +1,4 @@
-import { sql, eq } from "drizzle-orm";
+import { sql, eq, inArray } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { betaSignups, subscriptions } from "@/db/schema";
@@ -12,9 +12,11 @@ const BETA_MAX_SLOTS = 100;
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
+    // Count active/trialing signups only (exclude pending and canceled)
     const countResult = await db
       .select({ count: sql<number>`count(*)` })
-      .from(betaSignups);
+      .from(betaSignups)
+      .where(inArray(betaSignups.status, ["trialing", "active"]));
 
     const taken = Number(countResult[0]?.count ?? 0);
     const remaining = Math.max(0, BETA_MAX_SLOTS - taken);

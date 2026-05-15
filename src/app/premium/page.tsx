@@ -163,6 +163,19 @@ function formatDate(dateStr: string | null | undefined): string {
   }
 }
 
+function getDaysRemaining(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  try {
+    const end = new Date(dateStr).getTime();
+    const now = Date.now();
+    const diff = end - now;
+    if (diff <= 0) return 0;
+    return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  } catch {
+    return null;
+  }
+}
+
 export default function PremiumPage() {
   return (
     <Suspense
@@ -604,7 +617,13 @@ function PremiumPageContent() {
                           {isCanceling
                             ? `Your plan will end on ${formatDate(subscriptionData?.subscription?.currentPeriodEnd)}. You can still use all features until then.`
                             : subscriptionData?.subscription?.status === "trialing"
-                              ? `Free trial ends on ${formatDate(subscriptionData?.subscription?.currentPeriodEnd)}`
+                              ? (() => {
+                                  const days = getDaysRemaining(subscriptionData?.subscription?.currentPeriodEnd);
+                                  const dateStr = formatDate(subscriptionData?.subscription?.currentPeriodEnd);
+                                  return days !== null
+                                    ? `Free trial ends on ${dateStr} — ${days} day${days === 1 ? "" : "s"} remaining`
+                                    : `Free trial ends on ${dateStr}`;
+                                })()
                               : `Renews on ${formatDate(subscriptionData?.subscription?.currentPeriodEnd)}`
                           }
                         </p>
