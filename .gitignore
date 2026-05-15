@@ -1,0 +1,14 @@
+node_modules/
+.next/
+.vercel
+.env
+.env.*
+*.db
+*.log
+full_logs.txt
+vercel_logs.txt
+project_info__1.md
+.kilo/
+.vercel-prod-check.env
+tsc_out*.txt
+website_design.md

@@ -1,0 +1,16 @@
+.next/
+node_modules/
+.vercel/
+.git/
+**/*.pack
+*.log
+/db
+/db-wal
+/local.db
+temp/
+test-db.ts
+check-tokens.ts
+tsconfig.tsbuildinfo
+build_log.txt
+.sixth/
+.orchids/
