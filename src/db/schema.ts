@@ -471,7 +471,7 @@ export const notifications = sqliteTable('notifications', {
 
 export const subscriptions = sqliteTable('subscriptions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().unique().references(() => user.id, { onDelete: 'cascade' }),
   planId: text('plan_id').notNull(),
   status: text('status').notNull().default('pending'),
   currency: text('currency').notNull().default('GBP'),

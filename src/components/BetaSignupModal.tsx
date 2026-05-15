@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Loader2, Layers3, X, Sparkles, Shield } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -25,12 +25,16 @@ export default function BetaSignupModal({
   const [email, setEmail] = useState(prefillEmail);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Sync prefill values when modal opens
+  // Sync prefill values when session loads asynchronously
+  useEffect(() => {
+    if (prefillName && !name) setName(prefillName);
+  }, [prefillName]);
+
+  useEffect(() => {
+    if (prefillEmail && !email) setEmail(prefillEmail);
+  }, [prefillEmail]);
+
   const handleOpenChange = (open: boolean) => {
-    if (open) {
-      if (prefillName && !name) setName(prefillName);
-      if (prefillEmail && !email) setEmail(prefillEmail);
-    }
     if (!open) onClose();
   };
 

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { betaSignups, subscriptions } from "@/db/schema";
 import { isActiveSubscriptionStatus } from "@/lib/billing";
+import { getStripeClient } from "@/lib/stripe";
 
 /**
  * Link a beta signup to a platform user account by email.
@@ -12,6 +13,7 @@ import { isActiveSubscriptionStatus } from "@/lib/billing";
  * Called from:
  * - better-auth user.create.after hook (new signups)
  * - Stripe webhook when beta checkout completes
+ * - /api/billing/subscription on sign-in (catch existing users)
  */
 export async function linkBetaSignup(userId: string, email: string): Promise<boolean> {
   try {
@@ -23,7 +25,7 @@ export async function linkBetaSignup(userId: string, email: string): Promise<boo
       .where(eq(betaSignups.email, normalizedEmail))
       .limit(1);
 
-    const beta = betaRows[0];
+    let beta = betaRows[0];
     if (!beta) return false;
 
     // Already linked to a different user
@@ -37,7 +39,44 @@ export async function linkBetaSignup(userId: string, email: string): Promise<boo
         .where(eq(betaSignups.id, beta.id));
     }
 
-    // Only upsert subscription if beta signup has an active/trialing Stripe subscription
+    // If status is still "pending" but we have a Stripe subscription or checkout,
+    // proactively fetch the real status from Stripe (handles webhook race condition)
+    if (beta.status === "pending" && (beta.stripeSubscriptionId || beta.stripeCheckoutSessionId)) {
+      try {
+        const stripe = getStripeClient();
+        let subId = beta.stripeSubscriptionId;
+
+        // If no subscription ID yet, try to get it from the checkout session
+        if (!subId && beta.stripeCheckoutSessionId) {
+          const checkout = await stripe.checkout.sessions.retrieve(beta.stripeCheckoutSessionId);
+          if (checkout.subscription) {
+            subId = typeof checkout.subscription === "string" ? checkout.subscription : checkout.subscription.id;
+          }
+        }
+
+        if (subId) {
+          const stripeSub = await stripe.subscriptions.retrieve(subId);
+          const realStatus = stripeSub.status === "trialing" ? "trialing" : stripeSub.status === "active" ? "active" : stripeSub.status;
+
+          // Update beta_signups with real status
+          await db
+            .update(betaSignups)
+            .set({
+              status: realStatus,
+              stripeSubscriptionId: subId,
+            })
+            .where(eq(betaSignups.id, beta.id));
+
+          // Re-read the updated row
+          const updated = await db.select().from(betaSignups).where(eq(betaSignups.id, beta.id)).limit(1);
+          if (updated[0]) beta = updated[0];
+        }
+      } catch (e) {
+        console.error("[beta-link] Stripe proactive fetch failed:", e);
+      }
+    }
+
+    // Upsert subscription if beta signup has an active/trialing Stripe subscription
     if (beta.stripeSubscriptionId && (beta.status === "trialing" || beta.status === "active")) {
       // Check if user already has an active subscription
       const existingSub = await db

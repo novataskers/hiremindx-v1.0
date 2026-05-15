@@ -13,6 +13,9 @@ type BetaStatus = {
   taken: number;
   remaining: number;
   isFull: boolean;
+  isMember: boolean;
+  memberOrder: number | null;
+  memberStatus: string | null;
 };
 
 export default function JoinBetaPage() {
@@ -36,6 +39,8 @@ function JoinBetaContent() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [betaStatus, setBetaStatus] = useState<BetaStatus | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [postCheckout, setPostCheckout] = useState(false);
+  const [checkoutOrder, setCheckoutOrder] = useState<string | null>(null);
 
   // Static stars
   const stars = useMemo(() => {
@@ -86,12 +91,18 @@ function JoinBetaContent() {
     const order = searchParams.get("order");
 
     if (success === "1") {
+      setPostCheckout(true);
+      if (order) setCheckoutOrder(order);
       toast.success("Welcome to the Founding 100!", {
         description: order
           ? `You are member #${order}. Your 14-day free Elite trial has started.`
           : "Your 14-day free Elite trial has started.",
       });
       fetchStatus();
+      // If already signed in, trigger subscription linking
+      if (session?.user) {
+        fetch("/api/billing/subscription").catch(() => {});
+      }
     }
 
     if (canceled === "1") {
@@ -107,6 +118,7 @@ function JoinBetaContent() {
   const remaining = betaStatus?.remaining ?? 100;
   const taken = betaStatus?.taken ?? 0;
   const progressPercent = Math.min(100, (taken / 100) * 100);
+  const isMember = betaStatus?.isMember ?? false;
 
   const features = [
     { icon: Zap, text: "Full Elite access — every feature, unlimited" },
@@ -323,30 +335,94 @@ function JoinBetaContent() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.5 }}
-          className="flex flex-col sm:flex-row items-center gap-3 mb-14 w-full max-w-md"
+          className="flex flex-col items-center gap-3 mb-14 w-full max-w-md"
         >
-          <button
-            onClick={() => !isFull && setIsModalOpen(true)}
-            disabled={isFull}
-            className="w-full sm:flex-1 h-12 rounded-2xl text-sm font-bold tracking-wide transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{
-              background: isFull ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, #c8960c, #f5d060)",
-              color: isFull ? "#71717a" : "#000",
-              boxShadow: isFull ? "none" : "0 0 30px rgba(245,208,96,0.2)",
-            }}
-          >
-            <Sparkles className="w-4 h-4" />
-            {isFull ? "Beta is Full" : "Claim Your Spot"}
-          </button>
+          {isMember ? (
+            /* ── Already a member state ── */
+            <div className="w-full rounded-2xl border border-green-500/20 bg-green-500/[0.04] p-6 text-center">
+              <div className="flex items-center justify-center gap-2 mb-3">
+                <Check className="w-5 h-5 text-green-400" />
+                <span className="text-sm font-bold text-green-400 tracking-wide">
+                  You&apos;re a Founding Member{betaStatus?.memberOrder ? ` #${betaStatus.memberOrder}` : ""}!
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400 mb-4">
+                Your Elite plan is {betaStatus?.memberStatus === "trialing" ? "in free trial" : "active"} at 50% off for life.
+              </p>
+              <button
+                onClick={() => router.push("/assist")}
+                className="w-full h-11 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
+                style={{
+                  background: "linear-gradient(135deg, #c8960c, #f5d060)",
+                  color: "#000",
+                }}
+              >
+                <Rocket className="w-4 h-4" />
+                Go to Dashboard
+              </button>
+            </div>
+          ) : postCheckout ? (
+            /* ── Post-checkout: prompt to sign in ── */
+            <div className="w-full rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-6 text-center">
+              <div className="flex items-center justify-center gap-2 mb-3">
+                <Check className="w-5 h-5 text-amber-400" />
+                <span className="text-sm font-bold text-amber-400 tracking-wide">
+                  Payment Successful{checkoutOrder ? ` — You're #${checkoutOrder}` : ""}!
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400 mb-4">
+                {session?.user
+                  ? "Your Elite plan is being activated. Head to the dashboard!"
+                  : "Sign in with the same email to activate your Elite access."}
+              </p>
+              <button
+                onClick={() => router.push(session?.user ? "/assist" : "/login")}
+                className="w-full h-11 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
+                style={{
+                  background: "linear-gradient(135deg, #c8960c, #f5d060)",
+                  color: "#000",
+                }}
+              >
+                {session?.user ? (
+                  <>
+                    <Rocket className="w-4 h-4" />
+                    Go to Dashboard
+                  </>
+                ) : (
+                  <>
+                    <ChevronRight className="w-4 h-4" />
+                    Sign In to Activate
+                  </>
+                )}
+              </button>
+            </div>
+          ) : (
+            /* ── Default signup CTAs ── */
+            <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
+              <button
+                onClick={() => !isFull && setIsModalOpen(true)}
+                disabled={isFull}
+                className="w-full sm:flex-1 h-12 rounded-2xl text-sm font-bold tracking-wide transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  background: isFull ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, #c8960c, #f5d060)",
+                  color: isFull ? "#71717a" : "#000",
+                  boxShadow: isFull ? "none" : "0 0 30px rgba(245,208,96,0.2)",
+                }}
+              >
+                <Sparkles className="w-4 h-4" />
+                {isFull ? "Beta is Full" : "Claim Your Spot"}
+              </button>
 
-          <button
-            onClick={() => !isFull && setIsModalOpen(true)}
-            disabled={isFull}
-            className="w-full sm:flex-1 h-12 rounded-2xl text-sm font-semibold tracking-wide bg-white/[0.06] border border-white/[0.1] text-zinc-200 hover:bg-white/10 hover:text-white transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <Crown className="w-4 h-4 text-amber-400" />
-            Join the Founding 100
-          </button>
+              <button
+                onClick={() => !isFull && setIsModalOpen(true)}
+                disabled={isFull}
+                className="w-full sm:flex-1 h-12 rounded-2xl text-sm font-semibold tracking-wide bg-white/[0.06] border border-white/[0.1] text-zinc-200 hover:bg-white/10 hover:text-white transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Crown className="w-4 h-4 text-amber-400" />
+                Join the Founding 100
+              </button>
+            </div>
+          )}
         </motion.div>
 
         {/* Features grid */}
@@ -401,18 +477,32 @@ function JoinBetaContent() {
               50% off Elite — locked in for life. Starts after 14-day free trial.
             </p>
 
-            <button
-              onClick={() => !isFull && setIsModalOpen(true)}
-              disabled={isFull}
-              className="w-full h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-              style={{
-                background: isFull ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, #c8960c, #f5d060)",
-                color: isFull ? "#71717a" : "#000",
-              }}
-            >
-              <ChevronRight className="w-4 h-4" />
-              {isFull ? "No spots remaining" : "Get Started with Beta Access"}
-            </button>
+            {isMember ? (
+              <button
+                onClick={() => router.push("/assist")}
+                className="w-full h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
+                style={{
+                  background: "linear-gradient(135deg, #c8960c, #f5d060)",
+                  color: "#000",
+                }}
+              >
+                <Check className="w-4 h-4" />
+                You have this plan
+              </button>
+            ) : (
+              <button
+                onClick={() => !(isFull || postCheckout) && setIsModalOpen(true)}
+                disabled={isFull || postCheckout}
+                className="w-full h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  background: isFull || postCheckout ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, #c8960c, #f5d060)",
+                  color: isFull || postCheckout ? "#71717a" : "#000",
+                }}
+              >
+                <ChevronRight className="w-4 h-4" />
+                {isFull ? "No spots remaining" : postCheckout ? "Payment completed" : "Get Started with Beta Access"}
+              </button>
+            )}
           </div>
         </motion.div>
 
