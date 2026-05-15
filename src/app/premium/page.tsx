@@ -38,6 +38,9 @@ type SubscriptionData = {
     interval?: string | null;
   } | null;
   isActive: boolean;
+  isFounderBeta?: boolean;
+  founderSignupOrder?: number | null;
+  founderDiscountPercent?: number | null;
 };
 
 type Plan = {
@@ -352,10 +355,14 @@ function PremiumPageContent() {
   }, [currencyInfo, pricingLoading]);
 
   // Derived subscription state
-  const activePlanId = subscriptionData?.isActive ? subscriptionData?.subscription?.planId : null;
+  const rawActivePlanId = subscriptionData?.isActive ? subscriptionData?.subscription?.planId : null;
+  // Map beta_elite to elite for card highlighting (same features, just discounted)
+  const activePlanId = rawActivePlanId === "beta_elite" ? "elite" : rawActivePlanId;
   const activePlan = activePlanId ? plans.find((p) => p.id === activePlanId) : null;
   const isCanceling = subscriptionData?.subscription?.cancelAtPeriodEnd === true;
-  const hasActiveSubscription = Boolean(subscriptionData?.isActive && activePlanId);
+  const hasActiveSubscription = Boolean(subscriptionData?.isActive && rawActivePlanId);
+  const isFounderBeta = subscriptionData?.isFounderBeta ?? false;
+  const founderSignupOrder = subscriptionData?.founderSignupOrder ?? null;
 
   const handleCheckoutWithStripe = async (planId: string) => {
     setSelectedPlan(planId);
@@ -552,38 +559,53 @@ function PremiumPageContent() {
                 <div className={`rounded-2xl border p-5 ${
                   isCanceling
                     ? "border-amber-500/20 bg-amber-500/[0.04]"
-                    : "border-emerald-500/20 bg-emerald-500/[0.04]"
+                    : isFounderBeta
+                      ? "border-amber-500/30 bg-amber-500/[0.06]"
+                      : "border-emerald-500/20 bg-emerald-500/[0.04]"
                 }`}>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
                         isCanceling
                           ? "bg-amber-500/10 border border-amber-500/20"
-                          : "bg-emerald-500/10 border border-emerald-500/20"
+                          : isFounderBeta
+                            ? "bg-amber-500/10 border border-amber-500/20"
+                            : "bg-emerald-500/10 border border-emerald-500/20"
                       }`}>
                         {isCanceling ? (
                           <AlertTriangle className="w-5 h-5 text-amber-400" />
+                        ) : isFounderBeta ? (
+                          <Crown className="w-5 h-5 text-amber-400" />
                         ) : (
                           <Check className="w-5 h-5 text-emerald-400" />
                         )}
                       </div>
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="text-sm font-bold text-white">
-                            {activePlan?.name ?? "Active"} Plan
+                            {isFounderBeta ? "Elite Plan Active" : `${activePlan?.name ?? "Active"} Plan`}
                           </h3>
+                          {isFounderBeta && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                              Founder Beta Member{founderSignupOrder ? ` #${founderSignupOrder}` : ""}
+                            </span>
+                          )}
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
                             isCanceling
                               ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                              : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                              : isFounderBeta
+                                ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
                           }`}>
-                            {isCanceling ? "Canceling" : "Active"}
+                            {isCanceling ? "Canceling" : subscriptionData?.subscription?.status === "trialing" ? "Free Trial" : "Active"}
                           </span>
                         </div>
                         <p className="text-xs text-zinc-400 mt-0.5">
                           {isCanceling
                             ? `Your plan will end on ${formatDate(subscriptionData?.subscription?.currentPeriodEnd)}. You can still use all features until then.`
-                            : `Renews on ${formatDate(subscriptionData?.subscription?.currentPeriodEnd)}`
+                            : subscriptionData?.subscription?.status === "trialing"
+                              ? `Free trial ends on ${formatDate(subscriptionData?.subscription?.currentPeriodEnd)}`
+                              : `Renews on ${formatDate(subscriptionData?.subscription?.currentPeriodEnd)}`
                           }
                         </p>
                       </div>
@@ -668,17 +690,23 @@ function PremiumPageContent() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 + i * 0.08, duration: 0.4 }}
                     className={`relative flex flex-col p-6 rounded-2xl border transition-all duration-300 ${
-                      isCurrentPlan
-                        ? "bg-white/[0.08] border-emerald-500/30 shadow-2xl ring-1 ring-emerald-500/10"
-                        : plan.popular
-                          ? "bg-white/[0.06] border-white/20 shadow-2xl"
-                          : "bg-zinc-900/50 border-white/[0.08] hover:bg-zinc-900/80 hover:border-white/10"
+                      isCurrentPlan && isFounderBeta && plan.id === "elite"
+                        ? "bg-amber-500/[0.05] border-amber-500/30 shadow-2xl ring-1 ring-amber-500/10"
+                        : isCurrentPlan
+                          ? "bg-white/[0.08] border-emerald-500/30 shadow-2xl ring-1 ring-emerald-500/10"
+                          : plan.popular
+                            ? "bg-white/[0.06] border-white/20 shadow-2xl"
+                            : "bg-zinc-900/50 border-white/[0.08] hover:bg-zinc-900/80 hover:border-white/10"
                     }`}
                   >
                     {isCurrentPlan && (
                       <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                        <span className="text-[10px] font-bold tracking-widest uppercase bg-emerald-500 text-white px-3 py-1 rounded-full">
-                          Your Plan
+                        <span className={`text-[10px] font-bold tracking-widest uppercase text-white px-3 py-1 rounded-full ${
+                          isFounderBeta && plan.id === "elite"
+                            ? "bg-amber-500"
+                            : "bg-emerald-500"
+                        }`}>
+                          {isFounderBeta && plan.id === "elite" ? "Founding Member" : "Your Plan"}
                         </span>
                       </div>
                     )}
@@ -699,8 +727,23 @@ function PremiumPageContent() {
                     <p className="text-xs text-zinc-500 mb-5 leading-relaxed">{plan.description}</p>
 
                     <div className="mb-6">
-                      <span className="text-4xl font-black text-white tracking-tighter">{priceLabel}</span>
-                      <span className="text-sm text-zinc-500 ml-1">{plan.period}</span>
+                      {isFounderBeta && plan.id === "elite" ? (
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-4xl font-black text-white tracking-tighter">
+                            {formatPriceForDisplay(9.99, currencyInfo)}
+                          </span>
+                          <span className="text-sm text-zinc-500">{plan.period}</span>
+                          <span className="text-sm text-zinc-500 line-through ml-1">{priceLabel}</span>
+                          <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded-full">
+                            50% Off Founder
+                          </span>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="text-4xl font-black text-white tracking-tighter">{priceLabel}</span>
+                          <span className="text-sm text-zinc-500 ml-1">{plan.period}</span>
+                        </>
+                      )}
                     </div>
 
                     <ul className="space-y-2.5 mb-6 flex-1">
@@ -725,17 +768,18 @@ function PremiumPageContent() {
                       }}
                       disabled={selectedPlan === plan.id || isCurrentPlan}
                       className={`w-full h-10 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center justify-center gap-1.5 ${
-                        isCurrentPlan
-                          ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 cursor-default"
-                          : isUpgrade
-                            ? "bg-white text-black hover:bg-zinc-200"
-                            : isDowngrade
-                              ? "bg-white/[0.06] border border-white/[0.08] text-zinc-400 hover:bg-white/10"
-                              : plan.popular
-                                ? "bg-white text-black hover:bg-zinc-200"
-                                : "bg-white/[0.06] border border-white/[0.08] text-zinc-200 hover:bg-white/10 hover:text-white"
-                      }`}
-                    >
+                        isCurrentPlan && isFounderBeta && plan.id === "elite"
+                          ? "bg-amber-500/10 border border-amber-500/20 text-amber-400 cursor-default"
+                          : isCurrentPlan
+                            ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 cursor-default"
+                            : isUpgrade
+                              ? "bg-white text-black hover:bg-zinc-200"
+                              : isDowngrade
+                                ? "bg-white/[0.06] border border-white/[0.08] text-zinc-400 hover:bg-white/10"
+                                : plan.popular
+                                  ? "bg-white text-black hover:bg-zinc-200"
+                                  : "bg-white/[0.06] border border-white/[0.08] text-zinc-200 hover:bg-white/10 hover:text-white"
+                      }`}>
                       {selectedPlan === plan.id ? (
                         "Processing..."
                       ) : isUpgrade ? (

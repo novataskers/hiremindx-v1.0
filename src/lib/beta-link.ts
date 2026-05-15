@@ -39,6 +39,10 @@ export async function linkBetaSignup(userId: string, email: string): Promise<boo
         .where(eq(betaSignups.id, beta.id));
     }
 
+    let stripePeriodStart: Date | null = null;
+    let stripePeriodEnd: Date | null = null;
+    let stripeCancelAtPeriodEnd = false;
+
     // If status is still "pending" but we have a Stripe subscription or checkout,
     // proactively fetch the real status from Stripe (handles webhook race condition)
     if (beta.status === "pending" && (beta.stripeSubscriptionId || beta.stripeCheckoutSessionId)) {
@@ -57,6 +61,16 @@ export async function linkBetaSignup(userId: string, email: string): Promise<boo
         if (subId) {
           const stripeSub = await stripe.subscriptions.retrieve(subId);
           const realStatus = stripeSub.status === "trialing" ? "trialing" : stripeSub.status === "active" ? "active" : stripeSub.status;
+
+          // Extract period dates from Stripe subscription
+          const item = stripeSub.items?.data?.[0];
+          const cpStart = (item as any)?.current_period_start ?? (stripeSub as any).current_period_start;
+          const cpEnd = (item as any)?.current_period_end ?? (stripeSub as any).current_period_end;
+          const trialEnd = (stripeSub as any).trial_end;
+
+          if (typeof cpStart === "number") stripePeriodStart = new Date(cpStart * 1000);
+          if (typeof cpEnd === "number") stripePeriodEnd = new Date(cpEnd * 1000);
+          stripeCancelAtPeriodEnd = stripeSub.cancel_at_period_end ?? false;
 
           // Update beta_signups with real status
           await db
@@ -92,6 +106,12 @@ export async function linkBetaSignup(userId: string, email: string): Promise<boo
         return true;
       }
 
+      // Fallback period: signup date + 14 days if Stripe data is missing
+      if (!stripePeriodEnd && beta.createdAt) {
+        const signupDate = new Date(beta.createdAt);
+        stripePeriodEnd = new Date(signupDate.getTime() + 14 * 24 * 60 * 60 * 1000);
+      }
+
       await db
         .insert(subscriptions)
         .values({
@@ -104,9 +124,9 @@ export async function linkBetaSignup(userId: string, email: string): Promise<boo
           stripeCustomerId: beta.stripeCustomerId,
           stripeSubscriptionId: beta.stripeSubscriptionId,
           stripeCheckoutSessionId: beta.stripeCheckoutSessionId,
-          currentPeriodStart: null,
-          currentPeriodEnd: null,
-          cancelAtPeriodEnd: false,
+          currentPeriodStart: stripePeriodStart,
+          currentPeriodEnd: stripePeriodEnd,
+          cancelAtPeriodEnd: stripeCancelAtPeriodEnd,
           metadata: {
             betaSignup: true,
             signupOrder: beta.signupOrder,
@@ -122,6 +142,9 @@ export async function linkBetaSignup(userId: string, email: string): Promise<boo
             stripeCustomerId: beta.stripeCustomerId,
             stripeSubscriptionId: beta.stripeSubscriptionId,
             stripeCheckoutSessionId: beta.stripeCheckoutSessionId,
+            currentPeriodStart: stripePeriodStart,
+            currentPeriodEnd: stripePeriodEnd,
+            cancelAtPeriodEnd: stripeCancelAtPeriodEnd,
             metadata: {
               betaSignup: true,
               signupOrder: beta.signupOrder,

@@ -70,6 +70,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const plan = subscription ? getBillingPlan(subscription.planId) : null;
 
+  // Derive founder metadata for frontend
+  let isFounderBeta = subscription?.planId === "beta_elite";
+  let founderSignupOrder: number | null = null;
+  try {
+    const meta = subscription?.metadata ? (typeof subscription.metadata === "string" ? JSON.parse(subscription.metadata) : subscription.metadata) : null;
+    if (meta?.betaSignup || meta?.signupOrder) {
+      isFounderBeta = true;
+      founderSignupOrder = typeof meta.signupOrder === "number" ? meta.signupOrder : null;
+    }
+  } catch {
+    // ignore metadata parse errors
+  }
+
   return NextResponse.json({
     subscription: subscription
       ? {
@@ -94,5 +107,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }
       : null,
     isActive: subscription ? isActiveSubscriptionStatus(subscription.status) : false,
+    isFounderBeta,
+    founderSignupOrder,
+    founderDiscountPercent: isFounderBeta ? 50 : null,
   });
 }
