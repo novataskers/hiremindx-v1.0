@@ -42,6 +42,8 @@ type SubscriptionResponse = {
     interval?: string | null;
   } | null;
   isActive: boolean;
+  isFounderBeta?: boolean;
+  founderSignupOrder?: number | null;
 };
 
 type PlanMeta = {
@@ -263,6 +265,9 @@ export default function Settings(): JSX.Element {
     return diffDays <= 14;
   };
 
+  const isFounderBeta = subscriptionData?.isFounderBeta ?? false;
+  const isFounderTrialing = isFounderBeta && subscriptionData?.subscription?.status === "trialing";
+
   const handleCancelSubscription = async () => {
     setIsCancelling(true);
     try {
@@ -270,12 +275,17 @@ export default function Settings(): JSX.Element {
         method: "POST",
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        const data = await response.json();
         throw new Error(data.error || "Failed to cancel subscription");
       }
 
-      toast.success("Subscription canceled successfully");
+      if (data.founderReset) {
+        toast.success("Founder Beta membership withdrawn");
+      } else {
+        toast.success("Subscription canceled successfully");
+      }
       setShowCancelConfirm(false);
       // Reload subscription data to show updated status
       setTimeout(() => window.location.reload(), 1500);
@@ -519,9 +529,15 @@ export default function Settings(): JSX.Element {
                       <div className="flex items-start gap-3 mb-4">
                         <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
                         <div>
-                          <p className="mb-1 text-sm font-medium text-white">Cancel your subscription?</p>
+                          <p className="mb-1 text-sm font-medium text-white">
+                            {isFounderTrialing ? "Withdraw from Founder Beta?" : "Cancel your subscription?"}
+                          </p>
                           <p className="text-xs text-zinc-400">
-                            {isEligibleForRefund() ? (
+                            {isFounderTrialing ? (
+                              "This will permanently revoke your Founder Beta membership, release your founder spot, and remove all beta privileges. Your account will return to free-tier status. This action cannot be undone."
+                            ) : isFounderBeta ? (
+                              "Your Founder Elite subscription will be canceled at the end of the current billing period. You will keep founder access and pricing until then."
+                            ) : isEligibleForRefund() ? (
                               "Since you subscribed within the last 14 days, you are eligible for a full refund. Your subscription will be canceled immediately, and the funds will be returned to your account in 48 hours."
                             ) : (
                               "Since 14 days have passed since your subscription started, you are no longer eligible for a refund. Your subscription will still be canceled at the end of your current billing period."
@@ -534,14 +550,14 @@ export default function Settings(): JSX.Element {
                           onClick={() => setShowCancelConfirm(false)}
                           className="flex-1 h-10 rounded-xl border border-white/[0.08] bg-white/[0.06] text-sm font-medium text-zinc-300 transition-all hover:bg-white/10"
                         >
-                          Keep Subscription
+                          {isFounderTrialing ? "Keep Membership" : "Keep Subscription"}
                         </button>
                         <button
                           onClick={handleCancelSubscription}
                           disabled={isCancelling}
                           className="flex-1 h-10 rounded-xl bg-red-600 text-sm font-semibold text-white transition-all hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          {isCancelling ? "Canceling..." : "Confirm Cancel"}
+                          {isCancelling ? "Canceling..." : isFounderTrialing ? "Withdraw & Release Spot" : "Confirm Cancel"}
                         </button>
                       </div>
                     </motion.div>

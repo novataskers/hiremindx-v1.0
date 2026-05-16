@@ -2,8 +2,8 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { subscriptions, user } from "@/db/schema";
-import { isActiveSubscriptionStatus } from "@/lib/billing";
+import { subscriptions, betaSignups, user } from "@/db/schema";
+import { isActiveSubscriptionStatus, isBetaPlan } from "@/lib/billing";
 import { getStripeClient } from "@/lib/stripe";
 import { sendHireMindXEmailNotification } from "@/lib/email";
 
@@ -59,7 +59,70 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const stripe = getStripeClient();
+    const isFounderBeta = isBetaPlan(subscription.planId);
+    const isTrialing = subscription.status === "trialing";
 
+    // ── Founder Beta: trial-period cancellation = full withdrawal ──
+    if (isFounderBeta && isTrialing) {
+      // Cancel Stripe subscription immediately (no charge since trialing)
+      await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
+
+      // Delete the subscriptions row entirely (clean slate)
+      await db
+        .delete(subscriptions)
+        .where(eq(subscriptions.userId, session.user.id));
+
+      // Delete the beta_signups row by email (releases quota slot)
+      const userEmail = session.user.email?.trim().toLowerCase();
+      if (userEmail) {
+        await db
+          .delete(betaSignups)
+          .where(eq(betaSignups.email, userEmail));
+      }
+
+      // Safety: also clear any beta_signups linked by userId
+      await db
+        .delete(betaSignups)
+        .where(eq(betaSignups.userId, session.user.id));
+
+      await sendCancellationEmail(session.user.id);
+
+      console.log(`[billing/cancel] Founder beta trial cancellation — full cleanup for user ${session.user.id}`);
+
+      return NextResponse.json({
+        success: true,
+        founderReset: true,
+        message: "Your Founder Beta membership has been withdrawn. Your free trial has been canceled and your founder spot has been released.",
+        cancelAtPeriodEnd: false,
+        status: "canceled",
+      });
+    }
+
+    // ── Founder Beta: post-trial = cancel at period end (keep founder pricing until end) ──
+    if (isFounderBeta && !isTrialing) {
+      await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
+        cancel_at_period_end: true,
+      });
+
+      await db
+        .update(subscriptions)
+        .set({
+          cancelAtPeriodEnd: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(subscriptions.userId, session.user.id));
+
+      await sendCancellationEmail(session.user.id);
+
+      return NextResponse.json({
+        success: true,
+        message: "Your Founder Elite subscription will be canceled at the end of the current billing period. You will keep founder access until then.",
+        cancelAtPeriodEnd: true,
+        currentPeriodEnd: subscription.currentPeriodEnd,
+      });
+    }
+
+    // ── Regular plan cancellation ──
     const createdDate = new Date(subscription.createdAt);
     const now = new Date();
     const diffTime = Math.abs(now.getTime() - createdDate.getTime());

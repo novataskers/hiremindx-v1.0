@@ -405,6 +405,49 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       case "customer.subscription.deleted": {
         const stripeSubscription = event.data.object as Stripe.Subscription;
 
+        // ── Beta subscription deleted ──
+        if (stripeSubscription.metadata?.betaSignup === "true" && stripeSubscription.metadata?.betaEmail) {
+          const betaEmail = stripeSubscription.metadata.betaEmail.trim().toLowerCase();
+
+          // Mark beta_signups row as canceled (safety net — cancel endpoint may have already deleted it)
+          await db
+            .update(betaSignups)
+            .set({ status: "canceled" })
+            .where(eq(betaSignups.email, betaEmail));
+
+          // Check if subscription row still exists (cancel endpoint deletes it for trial cancellations)
+          const betaRows = await db
+            .select({ userId: betaSignups.userId })
+            .from(betaSignups)
+            .where(eq(betaSignups.email, betaEmail))
+            .limit(1);
+
+          const betaUserId = betaRows[0]?.userId;
+          if (betaUserId) {
+            const existingSub = await db
+              .select({ id: subscriptions.id })
+              .from(subscriptions)
+              .where(eq(subscriptions.userId, betaUserId))
+              .limit(1);
+
+            // Only update if the row still exists — do NOT re-create it
+            if (existingSub[0]) {
+              await db
+                .update(subscriptions)
+                .set({
+                  status: "canceled",
+                  cancelAtPeriodEnd: false,
+                  updatedAt: new Date(),
+                })
+                .where(eq(subscriptions.userId, betaUserId));
+            }
+
+            await sendSubscriptionCanceledEmail(betaUserId);
+          }
+          break;
+        }
+
+        // ── Regular subscription deleted ──
         const userId = await findUserIdFromStripeIdentifiers({
           userId: stripeSubscription.metadata?.userId ?? null,
           customerId: typeof stripeSubscription.customer === "string" ? stripeSubscription.customer : null,

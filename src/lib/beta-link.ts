@@ -28,6 +28,9 @@ export async function linkBetaSignup(userId: string, email: string): Promise<boo
     let beta = betaRows[0];
     if (!beta) return false;
 
+    // Do not re-link canceled or expired beta signups (user already withdrew)
+    if (beta.status === "canceled" || beta.status === "expired") return false;
+
     // Already linked to a different user
     if (beta.userId && beta.userId !== userId) return false;
 

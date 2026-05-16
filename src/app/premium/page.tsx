@@ -423,15 +423,21 @@ function PremiumPageContent() {
         headers: { "Content-Type": "application/json" },
       });
 
-      const data = (await readJsonResponse<{ success?: boolean; error?: string; message?: string }>(response)) ?? {};
+      const data = (await readJsonResponse<{ success?: boolean; error?: string; message?: string; founderReset?: boolean }>(response)) ?? {};
 
       if (!response.ok) {
         throw new Error(data.error || "Unable to cancel subscription.");
       }
 
-      toast.success("Subscription canceled", {
-        description: data.message || "Your subscription will end at the current billing period.",
-      });
+      if (data.founderReset) {
+        toast.success("Founder Beta membership withdrawn", {
+          description: data.message || "Your founder spot has been released and your account has been reset.",
+        });
+      } else {
+        toast.success("Subscription canceled", {
+          description: data.message || "Your subscription will end at the current billing period.",
+        });
+      }
 
       setShowCancelConfirm(false);
       await loadSubscription();
@@ -662,9 +668,17 @@ function PremiumPageContent() {
                       <div className="flex items-start gap-3 mb-4">
                         <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
                         <div>
-                          <p className="mb-1 text-sm font-medium text-white">Cancel your subscription?</p>
+                          <p className="mb-1 text-sm font-medium text-white">
+                            {isFounderBeta && subscriptionData?.subscription?.status === "trialing"
+                              ? "Withdraw from Founder Beta?"
+                              : "Cancel your subscription?"}
+                          </p>
                           <p className="text-xs text-zinc-400">
-                            {isEligibleForRefund() ? (
+                            {isFounderBeta && subscriptionData?.subscription?.status === "trialing" ? (
+                              "This will permanently revoke your Founder Beta membership, release your founder spot, and remove all beta privileges. Your account will return to free-tier status. This action cannot be undone."
+                            ) : isFounderBeta ? (
+                              "Your Founder Elite subscription will be canceled at the end of the current billing period. You will keep founder access and pricing until then."
+                            ) : isEligibleForRefund() ? (
                               "Since you subscribed within the last 14 days, you are eligible for a full refund. Your subscription will be canceled immediately, and the funds will be returned to your account in 48 hours."
                             ) : (
                               "Since 14 days have passed since your subscription started, you are no longer eligible for a refund. Your subscription will still be canceled at the end of your current billing period."
@@ -677,14 +691,14 @@ function PremiumPageContent() {
                           onClick={() => setShowCancelConfirm(false)}
                           className="flex-1 h-10 rounded-xl border border-white/[0.08] bg-white/[0.06] text-sm font-medium text-zinc-300 transition-all hover:bg-white/10"
                         >
-                          Keep Subscription
+                          {isFounderBeta && subscriptionData?.subscription?.status === "trialing" ? "Keep Membership" : "Keep Subscription"}
                         </button>
                         <button
                           onClick={handleCancel}
                           disabled={cancelLoading}
                           className="flex-1 h-10 rounded-xl bg-red-600 text-sm font-semibold text-white transition-all hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          {cancelLoading ? "Canceling..." : "Confirm Cancel"}
+                          {cancelLoading ? "Canceling..." : isFounderBeta && subscriptionData?.subscription?.status === "trialing" ? "Withdraw & Release Spot" : "Confirm Cancel"}
                         </button>
                       </div>
                     </motion.div>
