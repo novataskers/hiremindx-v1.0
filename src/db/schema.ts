@@ -1,4 +1,4 @@
-import { sqliteTable, integer, text, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, integer, text } from 'drizzle-orm/sqlite-core';
 
 
 
@@ -21,12 +21,6 @@ export const user = sqliteTable("user", {
   lastSeen: integer("last_seen"),
   marketingConsent: integer("marketing_consent", { mode: "boolean" }).notNull().default(false),
   marketingConsentAt: integer("marketing_consent_at", { mode: "timestamp" }),
-  // Beta / Founding Member fields (migrated from beta_signups)
-  betaStatus: text("beta_status"), // pending, trialing, active, canceled, expired
-  signupOrder: integer("signup_order"),
-  referralCode: text("referral_code").unique(),
-  welcomeEmailSent: integer("welcome_email_sent", { mode: "boolean" }).notNull().default(false),
-  stripeCustomerId: text("stripe_customer_id"),
 });
 
 export const session = sqliteTable("session", {
@@ -638,6 +632,24 @@ export const cancellationRecords = sqliteTable('cancellation_records', {
   createdAt: text('created_at').notNull(),
 });
 
+// Beta Signups — founding 100 members
+export const betaSignups = sqliteTable('beta_signups', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  email: text('email').notNull().unique(),
+  name: text('name').notNull(),
+  signupOrder: integer('signup_order').notNull(), // 1–100
+  userId: text('user_id').references(() => user.id, { onDelete: 'set null' }), // linked when user creates account
+  stripeCustomerId: text('stripe_customer_id'),
+  stripeSubscriptionId: text('stripe_subscription_id'),
+  stripeCheckoutSessionId: text('stripe_checkout_session_id'),
+  status: text('status').notNull().default('pending'), // pending, trialing, active, canceled, expired
+  referralCode: text('referral_code').unique(),
+  welcomeEmailSent: integer('welcome_email_sent', { mode: 'boolean' }).notNull().default(false),
+  marketingConsent: integer('marketing_consent', { mode: 'boolean' }).notNull().default(false),
+  marketingConsentAt: text('marketing_consent_at'),
+  createdAt: text('created_at').notNull(),
+});
+
 // Referrals — tracks who used a founder's referral link
 export const referrals = sqliteTable('referrals', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -654,7 +666,7 @@ export const referrals = sqliteTable('referrals', {
 // Founder Rewards — tracks free months, badge, and private access
 export const founderRewards = sqliteTable('founder_rewards', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().unique().references(() => user.id, { onDelete: 'cascade' }),
   freeMonthsGranted: integer('free_months_granted').notNull().default(0),
   freeMonthsUsed: integer('free_months_used').notNull().default(0),
   freeMonthsPending: integer('free_months_pending').notNull().default(0),
@@ -662,6 +674,4 @@ export const founderRewards = sqliteTable('founder_rewards', {
   privateAccessGranted: integer('private_access_granted', { mode: 'boolean' }).notNull().default(false),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
-}, (table) => ({
-  userIdIdx: index('founder_rewards_user_id_unique').on(table.userId),
-}));
+});

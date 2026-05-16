@@ -12,14 +12,17 @@ interface BetaSignupModalProps {
   isOpen: boolean;
   onClose: () => void;
   prefillName?: string;
+  prefillEmail?: string;
 }
 
 export default function BetaSignupModal({
   isOpen,
   onClose,
   prefillName = "",
+  prefillEmail = "",
 }: BetaSignupModalProps) {
   const [name, setName] = useState(prefillName);
+  const [email, setEmail] = useState(prefillEmail);
   const [marketingConsent, setMarketingConsent] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -27,6 +30,10 @@ export default function BetaSignupModal({
   useEffect(() => {
     if (prefillName && !name) setName(prefillName);
   }, [prefillName]);
+
+  useEffect(() => {
+    if (prefillEmail && !email) setEmail(prefillEmail);
+  }, [prefillEmail]);
 
   const handleOpenChange = (open: boolean) => {
     if (!open) onClose();
@@ -36,9 +43,15 @@ export default function BetaSignupModal({
     e.preventDefault();
 
     const trimmedName = name.trim();
+    const trimmedEmail = email.trim().toLowerCase();
 
     if (!trimmedName || trimmedName.length < 2) {
       toast.error("Please enter your full name.");
+      return;
+    }
+
+    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      toast.error("Please enter a valid email address.");
       return;
     }
 
@@ -48,7 +61,7 @@ export default function BetaSignupModal({
       const res = await fetch("/api/beta/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmedName, marketingConsent }),
+        body: JSON.stringify({ name: trimmedName, email: trimmedEmail, marketingConsent }),
       });
 
       const data = await res.json();
@@ -151,6 +164,21 @@ export default function BetaSignupModal({
                 />
               </div>
 
+              <div>
+                <label htmlFor="beta-email" className="block text-[10px] font-bold tracking-widest uppercase text-zinc-500 mb-1.5 ml-1">
+                  Email Address
+                </label>
+                <input
+                  id="beta-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  disabled={isLoading}
+                  className="w-full h-11 px-4 rounded-xl text-sm text-white placeholder-zinc-600 bg-white/[0.04] border border-white/[0.09] hover:border-white/[0.15] focus:border-amber-500/30 focus:ring-1 focus:ring-amber-500/20 focus:outline-none transition-all disabled:opacity-50"
+                />
+              </div>
             </div>
 
             {/* Submit */}

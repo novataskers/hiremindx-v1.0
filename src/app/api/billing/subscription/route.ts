@@ -41,6 +41,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   console.log("[subscription-api] user=", session.user.id, "sub=", subscription ? { status: subscription.status, checkoutId: subscription.stripeCheckoutSessionId, subId: subscription.stripeSubscriptionId } : "null");
 
+  // If no subscription exists, try to link a beta signup (handles existing users who signed up for beta)
+  // TODO: Implement beta signup linking if needed
+  // if (!subscription || (!isActiveSubscriptionStatus(subscription.status) && subscription.planId !== "beta_elite")) {
+  //   const linked = await linkBetaSignup(session.user.id, session.user.email);
+  //   if (linked) {
+  //     const recheck = await db.select().from(subscriptions).where(eq(subscriptions.userId, session.user.id)).limit(1);
+  //     if (recheck[0]) subscription = recheck[0];
+  //     console.log("[subscription-api] beta link result: linked=", linked, "sub=", subscription ? { status: subscription.status, planId: subscription.planId } : "null");
+  //   }
+  // }
+
   // Proactively check Stripe if the status is pending (e.g. just returned from checkout but webhook hasn't fired)
   if (subscription && subscription.status === "pending") {
     console.log("[subscription-api] status is pending, calling syncPendingSubscription");

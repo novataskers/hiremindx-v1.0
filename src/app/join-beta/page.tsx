@@ -70,6 +70,8 @@ function JoinBetaContent() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [betaStatus, setBetaStatus] = useState<BetaStatus | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [postCheckout, setPostCheckout] = useState(false);
+  const [checkoutOrder, setCheckoutOrder] = useState<string | null>(null);
   const [referralData, setReferralData] = useState<ReferralData | null>(null);
   const [referralExpired, setReferralExpired] = useState(false);
 
@@ -158,13 +160,18 @@ function JoinBetaContent() {
     const order = searchParams.get("order");
 
     if (success === "1") {
+      setPostCheckout(true);
+      if (order) setCheckoutOrder(order);
       toast.success("Welcome to the Founding 100!", {
         description: order
           ? `You are member #${order}. Your 14-day free Elite trial has started.`
           : "Your 14-day free Elite trial has started.",
       });
       fetchStatus();
-      fetch("/api/billing/subscription").catch(() => {});
+      // If already signed in, trigger subscription linking
+      if (session?.user) {
+        fetch("/api/billing/subscription").catch(() => {});
+      }
     }
 
     if (canceled === "1") {
@@ -405,38 +412,7 @@ function JoinBetaContent() {
           transition={{ duration: 0.5, delay: 0.5 }}
           className="flex flex-col items-center gap-3 mb-14 w-full max-w-md"
         >
-          {!session?.user ? (
-            /* ── Not signed in: auth gate ── */
-            <div className="w-full rounded-2xl border border-white/[0.08] bg-white/[0.03] p-6 text-center">
-              <div className="flex items-center justify-center gap-2 mb-3">
-                <Lock className="w-5 h-5 text-amber-400" />
-                <span className="text-sm font-bold text-white tracking-wide">
-                  Sign In to Join the Beta
-                </span>
-              </div>
-              <p className="text-xs text-zinc-400 mb-4">
-                You need a HireMindX account to claim a founding member spot. Sign in or create an account to continue.
-              </p>
-              <div className="flex flex-col sm:flex-row items-center gap-2">
-                <button
-                  onClick={() => router.push("/login")}
-                  className="w-full h-11 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
-                  style={{
-                    background: "linear-gradient(135deg, #c8960c, #f5d060)",
-                    color: "#000",
-                  }}
-                >
-                  Sign In
-                </button>
-                <button
-                  onClick={() => router.push("/register")}
-                  className="w-full h-11 rounded-xl text-sm font-semibold bg-white/[0.06] border border-white/[0.1] text-zinc-200 hover:bg-white/10 hover:text-white transition-all flex items-center justify-center"
-                >
-                  Create Account
-                </button>
-              </div>
-            </div>
-          ) : isMember ? (
+          {isMember ? (
             /* ── Founder Dashboard ── */
             <div className="w-full max-w-lg">
               {/* Welcome banner */}
@@ -559,6 +535,41 @@ function JoinBetaContent() {
               >
                 <Rocket className="w-4 h-4" />
                 Go to Dashboard
+              </button>
+            </div>
+          ) : postCheckout ? (
+            /* ── Post-checkout: prompt to sign in ── */
+            <div className="w-full rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-6 text-center">
+              <div className="flex items-center justify-center gap-2 mb-3">
+                <Check className="w-5 h-5 text-amber-400" />
+                <span className="text-sm font-bold text-amber-400 tracking-wide">
+                  Payment Successful{checkoutOrder ? ` — You're #${checkoutOrder}` : ""}!
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400 mb-4">
+                {session?.user
+                  ? "Your Elite plan is being activated. Head to the dashboard!"
+                  : "Sign in with the same email to activate your Elite access."}
+              </p>
+              <button
+                onClick={() => router.push(session?.user ? "/assist" : "/login")}
+                className="w-full h-11 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
+                style={{
+                  background: "linear-gradient(135deg, #c8960c, #f5d060)",
+                  color: "#000",
+                }}
+              >
+                {session?.user ? (
+                  <>
+                    <Rocket className="w-4 h-4" />
+                    Go to Dashboard
+                  </>
+                ) : (
+                  <>
+                    <ChevronRight className="w-4 h-4" />
+                    Sign In to Activate
+                  </>
+                )}
               </button>
             </div>
           ) : (
@@ -690,16 +701,16 @@ function JoinBetaContent() {
               </button>
             ) : (
               <button
-                onClick={() => !isFull && setIsModalOpen(true)}
-                disabled={isFull}
+                onClick={() => !(isFull || postCheckout) && setIsModalOpen(true)}
+                disabled={isFull || postCheckout}
                 className="w-full h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{
-                  background: isFull ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, #c8960c, #f5d060)",
-                  color: isFull ? "#71717a" : "#000",
+                  background: isFull || postCheckout ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, #c8960c, #f5d060)",
+                  color: isFull || postCheckout ? "#71717a" : "#000",
                 }}
               >
                 <ChevronRight className="w-4 h-4" />
-                {isFull ? "No spots remaining" : "Get Started with Beta Access"}
+                {isFull ? "No spots remaining" : postCheckout ? "Payment completed" : "Get Started with Beta Access"}
               </button>
             )}
           </div>
@@ -733,13 +744,12 @@ function JoinBetaContent() {
       </footer>
 
       {/* ── BETA SIGNUP MODAL ── */}
-      {session?.user && (
-        <BetaSignupModal
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-          prefillName={session.user.name ?? ""}
-        />
-      )}
+      <BetaSignupModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        prefillName={session?.user?.name ?? ""}
+        prefillEmail={session?.user?.email ?? ""}
+      />
 
       {/* ── SPARKLE ANIMATION KEYFRAMES ── */}
       <style jsx global>{`
