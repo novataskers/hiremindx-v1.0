@@ -12,3 +12,4 @@ project_info__1.md
 .vercel-prod-check.env
 tsc_out*.txt
 website_design.md
+.env*.local
