@@ -2,7 +2,7 @@ import Stripe from "stripe";
 import { eq, and, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { subscriptions, user, betaSignups, founderRewards, referrals } from "@/db/schema";
+import { subscriptions, user, founderRewards, referrals } from "@/db/schema";
 import { getBillingPlan } from "@/lib/billing";
 import { getStripeClient } from "@/lib/stripe";
 import { sendHireMindXEmailNotification } from "@/lib/email";
@@ -297,73 +297,65 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const customerId = typeof session.customer === "string" ? session.customer : session.customer?.id ?? null;
 
         // ── Beta signup checkout ──
-        if (session.metadata?.betaSignup === "true" && session.metadata?.betaEmail) {
-          const betaEmail = session.metadata.betaEmail.trim().toLowerCase();
+        if (session.metadata?.betaSignup === "true" && session.metadata?.userId) {
+          const userId = session.metadata.userId;
           const stripeSubscription = subscriptionId ? await stripe.subscriptions.retrieve(subscriptionId) : null;
           const betaStatus = stripeSubscription?.status === "trialing" ? "trialing" : stripeSubscription?.status === "active" ? "active" : "active";
 
-          // Fetch current beta signup to check existing referral code & email status
-          const betaRows = await db
+          // Fetch user to check existing referral code & welcome email status
+          const userRows = await db
             .select({
-              id: betaSignups.id,
-              name: betaSignups.name,
-              signupOrder: betaSignups.signupOrder,
-              referralCode: betaSignups.referralCode,
-              welcomeEmailSent: betaSignups.welcomeEmailSent,
-              userId: betaSignups.userId,
+              id: user.id,
+              name: user.name,
+              email: user.email,
+              signupOrder: user.signupOrder,
+              referralCode: user.referralCode,
+              welcomeEmailSent: user.welcomeEmailSent,
             })
-            .from(betaSignups)
-            .where(eq(betaSignups.email, betaEmail))
+            .from(user)
+            .where(eq(user.id, userId))
             .limit(1);
 
-          const betaRow = betaRows[0];
-          let referralCode = betaRow?.referralCode ?? null;
+          const userData = userRows[0];
+          if (!userData) {
+            console.error(`[stripe-webhook] User not found for userId: ${userId}`);
+            break;
+          }
+
+          let referralCode = userData.referralCode ?? null;
 
           // Generate referral code if not already set
           if (!referralCode) {
             referralCode = randomUUID().replace(/-/g, "").slice(0, 12);
             await db
-              .update(betaSignups)
+              .update(user)
               .set({ referralCode })
-              .where(eq(betaSignups.email, betaEmail));
+              .where(eq(user.id, userId));
           }
 
           await db
-            .update(betaSignups)
+            .update(user)
             .set({
-              stripeSubscriptionId: subscriptionId,
+              betaStatus,
               stripeCustomerId: typeof customerId === "string" ? customerId : undefined,
-              status: betaStatus,
             })
-            .where(eq(betaSignups.email, betaEmail));
-
-          // Try to link to existing user account
-          const { linkBetaSignup } = await import("@/lib/beta-link");
-          const userRows = await db
-            .select({ id: user.id })
-            .from(user)
-            .where(eq(user.email, betaEmail))
-            .limit(1);
-
-          if (userRows[0]) {
-            await linkBetaSignup(userRows[0].id, betaEmail);
-          }
+            .where(eq(user.id, userId));
 
           // Send welcome email once
-          if (betaRow && !betaRow.welcomeEmailSent && betaRow.name) {
+          if (!userData.welcomeEmailSent && userData.name && userData.email) {
             try {
               const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || "https://www.hiremindx.com";
               await sendHireMindXEmailNotification({
-                to: betaEmail,
-                subject: `Welcome to HireMindX — You're Founding Member #${betaRow.signupOrder}!`,
+                to: userData.email,
+                subject: `Welcome to HireMindX — You're Founding Member #${userData.signupOrder}!`,
                 title: "You're One of the First 100",
-                summary: `Congratulations ${betaRow.name}, you've secured your place as Founding Member #${betaRow.signupOrder} of HireMindX. Your 14-day free Elite trial has started, and you're locked in at £9.99/month (50% off) for life.`,
-                previewText: `Welcome to HireMindX — You're Founding Member #${betaRow.signupOrder}!`,
+                summary: `Congratulations ${userData.name}, you've secured your place as Founding Member #${userData.signupOrder} of HireMindX. Your 14-day free Elite trial has started, and you're locked in at £9.99/month (50% off) for life.`,
+                previewText: `Welcome to HireMindX — You're Founding Member #${userData.signupOrder}!`,
                 ctaLabel: "Start Using HireMindX",
                 ctaUrl: "/assist",
-                recipientName: betaRow.name,
+                recipientName: userData.name,
                 metadata: [
-                  { label: "Founder Number", value: `#${betaRow.signupOrder}` },
+                  { label: "Founder Number", value: `#${userData.signupOrder}` },
                   { label: "Plan", value: "Elite (Founding Member)" },
                   { label: "Price", value: "£9.99/month (50% off for life)" },
                   { label: "Free Trial", value: "14 days" },
@@ -373,28 +365,35 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               });
 
               await db
-                .update(betaSignups)
+                .update(user)
                 .set({ welcomeEmailSent: true })
-                .where(eq(betaSignups.email, betaEmail));
+                .where(eq(user.id, userId));
             } catch (emailError) {
               console.error("[stripe-webhook] Welcome email failed:", emailError);
             }
           }
 
-          // Ensure founderRewards row exists for linked user
-          const linkedUserId = userRows[0]?.id ?? betaRow?.userId;
-          if (linkedUserId) {
-            await db
-              .insert(founderRewards)
-              .values({
-                userId: linkedUserId,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              })
-              .onConflictDoNothing();
+          // Ensure founderRewards row exists
+          await db
+            .insert(founderRewards)
+            .values({
+              userId,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            })
+            .onConflictDoNothing();
+
+          // Sync subscription
+          if (stripeSubscription) {
+            await syncStripeSubscription({
+              userId,
+              stripeSubscription,
+              stripeCheckoutSessionId: session.id,
+              checkoutPlanId: "beta_elite",
+            });
           }
 
-          console.log(`[stripe-webhook] Beta checkout completed for ${betaEmail}`);
+          console.log(`[stripe-webhook] Beta checkout completed for user ${userId}`);
           break;
         }
 
@@ -424,14 +423,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           const referredEmail = typeof customer === "object" ? customer.email ?? null : null;
           if (referredEmail) {
             const normalizedEmail = referredEmail.trim().toLowerCase();
-            // Look up referrer by code
+            // Look up referrer by code in user table
             const referrerRows = await db
-              .select({ userId: betaSignups.userId, email: betaSignups.email })
-              .from(betaSignups)
-              .where(eq(betaSignups.referralCode, referralCode))
+              .select({ id: user.id, email: user.email })
+              .from(user)
+              .where(eq(user.referralCode, referralCode))
               .limit(1);
             const referrer = referrerRows[0];
-            if (referrer && referrer.userId && referrer.email !== normalizedEmail) {
+            if (referrer && referrer.id && referrer.email !== normalizedEmail) {
               // Create or update referrals row
               const existingRef = await db
                 .select({ id: referrals.id })
@@ -440,7 +439,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                 .limit(1);
               if (!existingRef[0]) {
                 await db.insert(referrals).values({
-                  referrerId: referrer.userId,
+                  referrerId: referrer.id,
                   referralCode,
                   referredEmail: normalizedEmail,
                   referredUserId: userId,
@@ -477,33 +476,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const stripeSubscription = event.data.object as Stripe.Subscription;
 
         // ── Beta subscription update ──
-        if (stripeSubscription.metadata?.betaSignup === "true" && stripeSubscription.metadata?.betaEmail) {
-          const betaEmail = stripeSubscription.metadata.betaEmail.trim().toLowerCase();
+        if (stripeSubscription.metadata?.betaSignup === "true" && stripeSubscription.metadata?.userId) {
+          const userId = stripeSubscription.metadata.userId;
           const betaStatus = stripeSubscription.status === "trialing" ? "trialing" : stripeSubscription.status === "active" ? "active" : stripeSubscription.status;
 
           await db
-            .update(betaSignups)
+            .update(user)
             .set({
-              stripeSubscriptionId: stripeSubscription.id,
-              status: betaStatus,
+              betaStatus,
             })
-            .where(eq(betaSignups.email, betaEmail));
+            .where(eq(user.id, userId));
 
-          // Also sync to subscriptions table if user is linked
-          const betaRows = await db
-            .select({ userId: betaSignups.userId })
-            .from(betaSignups)
-            .where(eq(betaSignups.email, betaEmail))
-            .limit(1);
-
-          if (betaRows[0]?.userId) {
-            await syncStripeSubscription({
-              userId: betaRows[0].userId,
-              stripeSubscription,
-              stripeCheckoutSessionId: null,
-              checkoutPlanId: "beta_elite",
-            });
-          }
+          // Sync to subscriptions table
+          await syncStripeSubscription({
+            userId,
+            stripeSubscription,
+            stripeCheckoutSessionId: null,
+            checkoutPlanId: "beta_elite",
+          });
           break;
         }
 
@@ -529,44 +519,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const stripeSubscription = event.data.object as Stripe.Subscription;
 
         // ── Beta subscription deleted ──
-        if (stripeSubscription.metadata?.betaSignup === "true" && stripeSubscription.metadata?.betaEmail) {
-          const betaEmail = stripeSubscription.metadata.betaEmail.trim().toLowerCase();
+        if (stripeSubscription.metadata?.betaSignup === "true" && stripeSubscription.metadata?.userId) {
+          const userId = stripeSubscription.metadata.userId;
 
-          // Mark beta_signups row as canceled (safety net — cancel endpoint may have already deleted it)
           await db
-            .update(betaSignups)
-            .set({ status: "canceled" })
-            .where(eq(betaSignups.email, betaEmail));
+            .update(user)
+            .set({ betaStatus: "canceled" })
+            .where(eq(user.id, userId));
 
-          // Check if subscription row still exists (cancel endpoint deletes it for trial cancellations)
-          const betaRows = await db
-            .select({ userId: betaSignups.userId })
-            .from(betaSignups)
-            .where(eq(betaSignups.email, betaEmail))
+          // Update subscription row if it exists
+          const existingSub = await db
+            .select({ id: subscriptions.id })
+            .from(subscriptions)
+            .where(eq(subscriptions.userId, userId))
             .limit(1);
 
-          const betaUserId = betaRows[0]?.userId;
-          if (betaUserId) {
-            const existingSub = await db
-              .select({ id: subscriptions.id })
-              .from(subscriptions)
-              .where(eq(subscriptions.userId, betaUserId))
-              .limit(1);
-
-            // Only update if the row still exists — do NOT re-create it
-            if (existingSub[0]) {
-              await db
-                .update(subscriptions)
-                .set({
-                  status: "canceled",
-                  cancelAtPeriodEnd: false,
-                  updatedAt: new Date(),
-                })
-                .where(eq(subscriptions.userId, betaUserId));
-            }
-
-            await sendSubscriptionCanceledEmail(betaUserId);
+          if (existingSub[0]) {
+            await db
+              .update(subscriptions)
+              .set({
+                status: "canceled",
+                cancelAtPeriodEnd: false,
+                updatedAt: new Date(),
+              })
+              .where(eq(subscriptions.userId, userId));
           }
+
+          await sendSubscriptionCanceledEmail(userId);
           break;
         }
 
@@ -708,12 +687,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                 .where(eq(founderRewards.userId, ref.referrerId));
 
               // Apply Stripe invoice credit for free months
-              const referrerBetaRows = await db
-                .select({ stripeCustomerId: betaSignups.stripeCustomerId })
-                .from(betaSignups)
-                .where(eq(betaSignups.userId, ref.referrerId))
+              const referrerUserRows = await db
+                .select({ stripeCustomerId: user.stripeCustomerId })
+                .from(user)
+                .where(eq(user.id, ref.referrerId))
                 .limit(1);
-              const referrerStripeCustomerId = referrerBetaRows[0]?.stripeCustomerId;
+              const referrerStripeCustomerId = referrerUserRows[0]?.stripeCustomerId;
               if (referrerStripeCustomerId && newFreeMonths > 0) {
                 try {
                   const creditAmountPence = newFreeMonths * BETA_ELITE_AMOUNT_PENCE; // £9.99 per month

@@ -1,7 +1,8 @@
 import { sql, eq, inArray, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { betaSignups, referrals } from "@/db/schema";
+import { user, subscriptions, referrals } from "@/db/schema";
 import { getStripeClient } from "@/lib/stripe";
 import { getBaseURL } from "@/lib/auth";
 import { normalizeBaseUrl } from "@/lib/billing";
@@ -19,7 +20,15 @@ function jsonError(message: string, status = 400): NextResponse {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    let body: { name?: string; email?: string; referralCode?: string; marketingConsent?: boolean };
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user?.id || !session.user.email) {
+      return jsonError("You must be signed in to join the beta.", 401);
+    }
+
+    const userId = session.user.id;
+    const email = session.user.email.trim().toLowerCase();
+
+    let body: { name?: string; referralCode?: string; marketingConsent?: boolean };
     try {
       body = await request.json();
     } catch {
@@ -27,7 +36,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const name = typeof body.name === "string" ? body.name.trim() : "";
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const referralCode = typeof body.referralCode === "string" ? body.referralCode.trim() : undefined;
     const marketingConsent = body.marketingConsent === true;
 
@@ -35,19 +43,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return jsonError("Please enter your full name.");
     }
 
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return jsonError("Please enter a valid email address.");
-    }
-
-    // Check if email already signed up
-    const existing = await db
-      .select({ id: betaSignups.id })
-      .from(betaSignups)
-      .where(eq(betaSignups.email, email))
+    // Check if user already has beta access
+    const existingBeta = await db
+      .select({ betaStatus: user.betaStatus })
+      .from(user)
+      .where(eq(user.id, userId))
       .limit(1);
 
-    if (existing.length > 0) {
-      return jsonError("This email is already registered for beta access.", 409);
+    if (existingBeta[0]?.betaStatus && !["canceled", "expired"].includes(existingBeta[0].betaStatus)) {
+      return jsonError("You are already registered for beta access.", 409);
     }
 
     // ── Referral code validation ──
@@ -55,13 +59,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (referralCode) {
       const referrerRows = await db
         .select({
-          email: betaSignups.email,
-          status: betaSignups.status,
-          userId: betaSignups.userId,
-          stripeCustomerId: betaSignups.stripeCustomerId,
+          id: user.id,
+          email: user.email,
+          betaStatus: user.betaStatus,
+          stripeCustomerId: user.stripeCustomerId,
         })
-        .from(betaSignups)
-        .where(eq(betaSignups.referralCode, referralCode))
+        .from(user)
+        .where(eq(user.referralCode, referralCode))
         .limit(1);
 
       const referrer = referrerRows[0];
@@ -70,12 +74,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
 
       // Self-referral guard
-      if (referrer.email === email) {
+      if (referrer.id === userId) {
         return jsonError("Cannot refer yourself.", 409);
       }
 
       // Referrer must be active or trialing
-      if (!["trialing", "active"].includes(referrer.status ?? "")) {
+      if (!["trialing", "active"].includes(referrer.betaStatus ?? "")) {
         return jsonError("Referral link is no longer active.", 409);
       }
 
@@ -107,11 +111,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       referrerStripeCustomerId = referrer.stripeCustomerId ?? undefined;
     }
 
-    // Count active/trialing signups only (exclude pending and canceled)
+    // Count active/trialing beta subscriptions (exclude pending and canceled)
     const countResult = await db
       .select({ count: sql<number>`count(*)` })
-      .from(betaSignups)
-      .where(inArray(betaSignups.status, ["trialing", "active"]));
+      .from(subscriptions)
+      .where(inArray(subscriptions.status, ["trialing", "active"]));
 
     const taken = Number(countResult[0]?.count ?? 0);
 
@@ -127,7 +131,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const customer = await stripe.customers.create({
       email,
       name,
-      metadata: { betaSignup: "true" },
+      metadata: { betaSignup: "true", userId },
     });
 
     // Create Stripe Checkout Session with 14-day trial
@@ -136,7 +140,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const checkoutMetadata: Record<string, string> = {
       betaSignup: "true",
-      betaEmail: email,
+      userId,
       planId: "beta_elite",
     };
     if (referralCode) {
@@ -154,7 +158,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         trial_period_days: BETA_TRIAL_DAYS,
         metadata: {
           betaSignup: "true",
-          betaEmail: email,
+          userId,
           planId: "beta_elite",
           ...(referralCode ? { referralCode } : {}),
         },
@@ -179,18 +183,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return jsonError("Unable to create checkout session.", 500);
     }
 
-    // Insert beta signup
-    await db.insert(betaSignups).values({
-      email,
-      name,
-      signupOrder,
-      stripeCustomerId: customer.id,
-      stripeCheckoutSessionId: checkoutSession.id,
-      status: "pending",
-      marketingConsent,
-      marketingConsentAt: marketingConsent ? new Date().toISOString() : null,
-      createdAt: new Date().toISOString(),
-    });
+    // Update user row with beta signup data
+    await db
+      .update(user)
+      .set({
+        name,
+        betaStatus: "pending",
+        signupOrder,
+        stripeCustomerId: customer.id,
+        marketingConsent,
+        marketingConsentAt: marketingConsent ? new Date() : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(user.id, userId));
 
     return NextResponse.json({
       url: checkoutSession.url,

@@ -2,7 +2,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { betaSignups, referrals, founderRewards } from "@/db/schema";
+import { user, referrals, founderRewards } from "@/db/schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,18 +16,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const userId = session.user.id;
 
-    // Get beta signup info for referral code
-    const betaRows = await db
+    // Get beta info from user table
+    const userRows = await db
       .select({
-        referralCode: betaSignups.referralCode,
-        signupOrder: betaSignups.signupOrder,
-        status: betaSignups.status,
+        referralCode: user.referralCode,
+        signupOrder: user.signupOrder,
+        betaStatus: user.betaStatus,
       })
-      .from(betaSignups)
-      .where(eq(betaSignups.userId, userId))
+      .from(user)
+      .where(eq(user.id, userId))
       .limit(1);
 
-    const beta = betaRows[0];
+    const beta = userRows[0];
     const referralCode = beta?.referralCode ?? null;
 
     // Get reward info
@@ -104,7 +104,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       referralCode,
       referralUrl: referralCode ? `${siteUrl.replace(/\/$/, "")}/join-beta?ref=${referralCode}` : null,
       founderNumber: beta?.signupOrder ?? null,
-      founderStatus: beta?.status ?? null,
+      founderStatus: beta?.betaStatus ?? null,
       stats: {
         paid: paidCount,
         trialing: trialingCount,

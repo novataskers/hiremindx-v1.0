@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { user, betaSignups } from "@/db/schema";
+import { user } from "@/db/schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,17 +46,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         marketingConsentAt: consent ? new Date() : null,
       })
       .where(eq(user.id, session.user.id));
-
-    // Also sync to beta_signups row if exists
-    if (session.user.email) {
-      await db
-        .update(betaSignups)
-        .set({
-          marketingConsent: consent,
-          marketingConsentAt: consent ? new Date().toISOString() : null,
-        })
-        .where(eq(betaSignups.email, session.user.email.trim().toLowerCase()));
-    }
 
     return NextResponse.json({ success: true, marketingConsent: consent });
   } catch (error) {

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { subscriptions, betaSignups, user } from "@/db/schema";
+import { subscriptions, user } from "@/db/schema";
 import { isActiveSubscriptionStatus, isBetaPlan } from "@/lib/billing";
 import { getStripeClient } from "@/lib/stripe";
 import { sendHireMindXEmailNotification } from "@/lib/email";
@@ -72,18 +72,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .delete(subscriptions)
         .where(eq(subscriptions.userId, session.user.id));
 
-      // Delete the beta_signups row by email (releases quota slot)
-      const userEmail = session.user.email?.trim().toLowerCase();
-      if (userEmail) {
-        await db
-          .delete(betaSignups)
-          .where(eq(betaSignups.email, userEmail));
-      }
-
-      // Safety: also clear any beta_signups linked by userId
+      // Update user betaStatus to canceled
       await db
-        .delete(betaSignups)
-        .where(eq(betaSignups.userId, session.user.id));
+        .update(user)
+        .set({ betaStatus: "canceled" })
+        .where(eq(user.id, session.user.id));
 
       await sendCancellationEmail(session.user.id);
 

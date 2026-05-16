@@ -65,22 +65,7 @@ export const auth = betterAuth({
 			trustedProviders: ["google", "microsoft"],
 		},
 	},
-	databaseHooks: {
-		user: {
-			create: {
-				after: async (user) => {
-					try {
-						const { linkBetaSignup } = await import("@/lib/beta-link");
-						if (user.email) {
-							await linkBetaSignup(user.id, user.email);
-						}
-					} catch (e) {
-						console.error("[auth-hook] beta link failed:", e);
-					}
-				},
-			},
-		},
-	},
+	databaseHooks: {},
 	plugins: [bearer()]
 });
 

@@ -1,7 +1,7 @@
 import { sql, eq, inArray } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { betaSignups, subscriptions } from "@/db/schema";
+import { user, subscriptions } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { isActiveSubscriptionStatus } from "@/lib/billing";
 
@@ -12,11 +12,11 @@ const BETA_MAX_SLOTS = 100;
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
-    // Count active/trialing signups only (exclude pending and canceled)
+    // Count active/trialing beta subscriptions
     const countResult = await db
       .select({ count: sql<number>`count(*)` })
-      .from(betaSignups)
-      .where(inArray(betaSignups.status, ["trialing", "active"]));
+      .from(subscriptions)
+      .where(inArray(subscriptions.status, ["trialing", "active"]));
 
     const taken = Number(countResult[0]?.count ?? 0);
     const remaining = Math.max(0, BETA_MAX_SLOTS - taken);
@@ -28,18 +28,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const session = await auth.api.getSession({ headers: request.headers }).catch(() => null);
 
-    if (session?.user?.email) {
-      const email = session.user.email.trim().toLowerCase();
-      const betaRows = await db
-        .select({ signupOrder: betaSignups.signupOrder, status: betaSignups.status })
-        .from(betaSignups)
-        .where(eq(betaSignups.email, email))
+    if (session?.user?.id) {
+      const userRows = await db
+        .select({ signupOrder: user.signupOrder, betaStatus: user.betaStatus })
+        .from(user)
+        .where(eq(user.id, session.user.id))
         .limit(1);
 
-      if (betaRows[0]) {
+      if (userRows[0]?.betaStatus && ["trialing", "active", "pending"].includes(userRows[0].betaStatus)) {
         isMember = true;
-        memberOrder = betaRows[0].signupOrder;
-        memberStatus = betaRows[0].status;
+        memberOrder = userRows[0].signupOrder;
+        memberStatus = userRows[0].betaStatus;
       }
 
       // Also check subscriptions table
