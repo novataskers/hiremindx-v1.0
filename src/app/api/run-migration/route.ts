@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/db";
-import { sql } from "drizzle-orm";
+import { client } from "@/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +18,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Helper to run SQL and track results
     const run = async (label: string, query: string) => {
       try {
-        await db.execute(sql.raw(query));
+        await client.execute(query);
         results.push(`✅ ${label}`);
       } catch (e: any) {
         if (e.message?.includes("duplicate column") || e.message?.includes("already exists")) {
