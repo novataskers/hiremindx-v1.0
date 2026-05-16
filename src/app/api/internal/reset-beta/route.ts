@@ -5,8 +5,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  // Admin secret check
-  const adminSecret = process.env.ADMIN_SECRET;
+  // Admin secret check — use ADMIN_SECRET or fall back to BETTER_AUTH_SECRET
+  const adminSecret = process.env.ADMIN_SECRET || process.env.BETTER_AUTH_SECRET;
   if (!adminSecret) {
     return NextResponse.json({ error: "ADMIN_SECRET not configured" }, { status: 500 });
   }
