@@ -5,16 +5,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  // Admin secret check — temporarily disabled for reset
-  // const adminSecret = process.env.ADMIN_SECRET || process.env.BETTER_AUTH_SECRET;
-  // if (!adminSecret) {
-  //   return NextResponse.json({ error: "ADMIN_SECRET not configured" }, { status: 500 });
-  // }
-  // const { searchParams } = new URL(request.url);
-  // const providedSecret = searchParams.get("secret");
-  // if (providedSecret !== adminSecret) {
-  //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  // }
+  // Admin secret check — use ADMIN_SECRET or fall back to BETTER_AUTH_SECRET
+  const adminSecret = process.env.ADMIN_SECRET || process.env.BETTER_AUTH_SECRET;
+  if (!adminSecret) {
+    return NextResponse.json({ error: "ADMIN_SECRET not configured" }, { status: 500 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const providedSecret = searchParams.get("secret");
+  if (providedSecret !== adminSecret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const rawUrl = process.env.TURSO_CONNECTION_URL || "";
   const url = rawUrl.replace(/^libsql:\/\//, "https://");
