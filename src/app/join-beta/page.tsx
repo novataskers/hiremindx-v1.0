@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
 import { motion } from "framer-motion";
-import { Layers3, Sparkles, Shield, Zap, Crown, Check, Users, Rocket, ChevronRight } from "lucide-react";
+import { Layers3, Sparkles, Shield, Zap, Crown, Check, Users, Rocket, ChevronRight, Link2, Copy, Gift, Award, Star, Lock } from "lucide-react";
 import { toast } from "sonner";
 import BetaSignupModal from "@/components/BetaSignupModal";
 
@@ -16,6 +16,37 @@ type BetaStatus = {
   isMember: boolean;
   memberOrder: number | null;
   memberStatus: string | null;
+};
+
+type ReferralData = {
+  referralCode: string | null;
+  referralUrl: string | null;
+  founderNumber: number | null;
+  founderStatus: string | null;
+  stats: {
+    paid: number;
+    trialing: number;
+    pending: number;
+    total: number;
+    remaining: number;
+  };
+  rewards: {
+    freeMonthsGranted: number;
+    freeMonthsUsed: number;
+    freeMonthsPending: number;
+    badgeGranted: boolean;
+    privateAccessGranted: boolean;
+  };
+  milestones: {
+    tier: number;
+    label: string;
+    unlocked: boolean;
+    reward: string;
+    freeMonths: number;
+    badge?: boolean;
+    privateAccess?: boolean;
+  }[];
+  referralsList: { id: number; status: string; date: string }[];
 };
 
 export default function JoinBetaPage() {
@@ -41,6 +72,8 @@ function JoinBetaContent() {
   const [mounted, setMounted] = useState(false);
   const [postCheckout, setPostCheckout] = useState(false);
   const [checkoutOrder, setCheckoutOrder] = useState<string | null>(null);
+  const [referralData, setReferralData] = useState<ReferralData | null>(null);
+  const [referralExpired, setReferralExpired] = useState(false);
 
   // Static stars
   const stars = useMemo(() => {
@@ -77,12 +110,48 @@ function JoinBetaContent() {
     }
   }, []);
 
+  const fetchReferrals = useCallback(async () => {
+    try {
+      const res = await fetch("/api/beta/referrals", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setReferralData(data);
+      }
+    } catch {
+      // Silently fail
+    }
+  }, []);
+
   useEffect(() => {
     setMounted(true);
     fetchStatus();
     const interval = setInterval(fetchStatus, 10000);
     return () => clearInterval(interval);
   }, [fetchStatus]);
+
+  // Fetch referral data when user is a member
+  useEffect(() => {
+    if (betaStatus?.isMember) {
+      fetchReferrals();
+    }
+  }, [betaStatus?.isMember, fetchReferrals]);
+
+  // Check for expired referral link from URL
+  useEffect(() => {
+    const ref = searchParams.get("ref");
+    if (ref) {
+      fetch(`/api/beta/referral-status?code=${encodeURIComponent(ref)}`)
+        .then((res) => {
+          if (res.status === 409) {
+            setReferralExpired(true);
+            toast.error("Referral Link Expired", {
+              description: "This referral link has reached its 10-person limit.",
+            });
+          }
+        })
+        .catch(() => {});
+    }
+  }, [searchParams]);
 
   // Handle success/cancel from Stripe redirect
   useEffect(() => {
@@ -127,6 +196,12 @@ function JoinBetaContent() {
     { icon: Rocket, text: "Priority AI processing & early feature access" },
     { icon: Users, text: "Founding Member badge on Community" },
     { icon: Sparkles, text: "All future premium features included" },
+  ];
+
+  const referralMilestones = [
+    { icon: Gift, count: "1", reward: "1 free month", desc: "Get your next Elite month completely free." },
+    { icon: Star, count: "5", reward: "3 more free months", desc: "Stack up 4 total free months of Elite." },
+    { icon: Award, count: "10", reward: "6 more + Badge + VIP", desc: "10 total free months, permanent Founder Badge, and private Founder Circle access." },
   ];
 
   return (
@@ -338,17 +413,118 @@ function JoinBetaContent() {
           className="flex flex-col items-center gap-3 mb-14 w-full max-w-md"
         >
           {isMember ? (
-            /* ── Already a member state ── */
-            <div className="w-full rounded-2xl border border-green-500/20 bg-green-500/[0.04] p-6 text-center">
-              <div className="flex items-center justify-center gap-2 mb-3">
-                <Check className="w-5 h-5 text-green-400" />
-                <span className="text-sm font-bold text-green-400 tracking-wide">
-                  You&apos;re a Founding Member{betaStatus?.memberOrder ? ` #${betaStatus.memberOrder}` : ""}!
-                </span>
+            /* ── Founder Dashboard ── */
+            <div className="w-full max-w-lg">
+              {/* Welcome banner */}
+              <div className="w-full rounded-2xl border border-green-500/20 bg-green-500/[0.04] p-6 text-center mb-4">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <Check className="w-5 h-5 text-green-400" />
+                  <span className="text-sm font-bold text-green-400 tracking-wide">
+                    You&apos;re a Founding Member{betaStatus?.memberOrder ? ` #${betaStatus.memberOrder}` : ""}!
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-400">
+                  Your Elite plan is {betaStatus?.memberStatus === "trialing" ? "in free trial" : "active"} at 50% off for life.
+                </p>
               </div>
-              <p className="text-xs text-zinc-400 mb-4">
-                Your Elite plan is {betaStatus?.memberStatus === "trialing" ? "in free trial" : "active"} at 50% off for life.
-              </p>
+
+              {/* Referral link */}
+              {referralData?.referralUrl && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="w-full rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-5 mb-4"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <Link2 className="w-4 h-4 text-amber-400" />
+                    <span className="text-xs font-bold tracking-wider uppercase text-amber-400">Your Referral Link</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 rounded-xl bg-black/40 border border-white/[0.08] px-3 py-2 text-[11px] text-zinc-300 font-mono truncate">
+                      {referralData.referralUrl}
+                    </div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(referralData.referralUrl!);
+                        toast.success("Referral link copied!");
+                      }}
+                      className="h-8 px-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold tracking-wide hover:bg-amber-500/20 transition-colors flex items-center gap-1.5"
+                    >
+                      <Copy className="w-3 h-3" />
+                      Copy
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Stats */}
+              {referralData && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="grid grid-cols-3 gap-2 mb-4"
+                >
+                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 text-center">
+                    <div className="text-lg font-black text-white">{referralData.stats.paid}</div>
+                    <div className="text-[9px] font-bold tracking-wider uppercase text-zinc-500">Paid</div>
+                  </div>
+                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 text-center">
+                    <div className="text-lg font-black text-white">{referralData.stats.remaining}</div>
+                    <div className="text-[9px] font-bold tracking-wider uppercase text-zinc-500">Left</div>
+                  </div>
+                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 text-center">
+                    <div className="text-lg font-black text-amber-400">{referralData.rewards.freeMonthsGranted}</div>
+                    <div className="text-[9px] font-bold tracking-wider uppercase text-zinc-500">Free Mo</div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Milestones */}
+              {referralData?.milestones && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.03] p-5 mb-4"
+                >
+                  <p className="text-[10px] font-bold tracking-wider uppercase text-zinc-500 mb-3">Referral Milestones</p>
+                  <div className="space-y-2">
+                    {referralData.milestones.map((m) => (
+                      <div
+                        key={m.tier}
+                        className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border ${
+                          m.unlocked
+                            ? "border-green-500/20 bg-green-500/[0.04]"
+                            : "border-white/[0.05] bg-white/[0.02]"
+                        }`}
+                      >
+                        <div
+                          className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
+                            m.unlocked ? "bg-green-500/20 text-green-400" : "bg-white/[0.06] text-zinc-600"
+                          }`}
+                        >
+                          {m.unlocked ? <Check className="w-3.5 h-3.5" /> : <span className="text-[10px] font-bold">{m.tier}</span>}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-xs font-semibold ${m.unlocked ? "text-green-400" : "text-zinc-400"}`}>
+                            {m.reward}
+                          </p>
+                          <p className="text-[10px] text-zinc-600">{m.label}</p>
+                        </div>
+                        {m.badge && m.unlocked && (
+                          <Award className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                        )}
+                        {m.privateAccess && m.unlocked && (
+                          <Lock className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Go to Dashboard */}
               <button
                 onClick={() => router.push("/assist")}
                 className="w-full h-11 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
@@ -453,6 +629,40 @@ function JoinBetaContent() {
             ))}
           </div>
         </motion.div>
+
+        {/* Referral Rewards pre-signup */}
+        {!isMember && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.8 }}
+            className="w-full max-w-2xl mt-14 mb-4"
+          >
+            <h2 className="text-center text-[11px] font-bold tracking-[0.35em] uppercase text-zinc-500 mb-6">
+              Refer Friends & Earn Free Elite
+            </h2>
+            <div className="grid sm:grid-cols-3 gap-3">
+              {referralMilestones.map((m, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.9 + i * 0.1 }}
+                  className="flex flex-col items-center gap-3 px-5 py-5 rounded-xl bg-zinc-900/50 border border-white/[0.06] hover:border-amber-500/15 transition-colors text-center"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-amber-500/[0.08] border border-amber-500/15 flex items-center justify-center">
+                    <m.icon className="w-4 h-4 text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-white mb-1">{m.count} Referral{m.count !== "1" ? "s" : ""}</p>
+                    <p className="text-xs text-amber-400 font-semibold mb-1">{m.reward}</p>
+                    <p className="text-[10px] text-zinc-500 leading-relaxed">{m.desc}</p>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        )}
 
         {/* Pricing highlight */}
         <motion.div

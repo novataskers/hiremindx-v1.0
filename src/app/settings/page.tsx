@@ -420,6 +420,7 @@ export default function Settings(): JSX.Element {
                       label="Weekly Digest"
                       description="A weekly summary of your job search activity"
                     />
+                    <MarketingConsentToggle />
                   </div>
                 </Section>
               )}
@@ -683,10 +684,12 @@ function ToggleRow({
   label,
   description,
   defaultChecked = false,
+  onChange,
 }: {
   label: string;
   description: string;
   defaultChecked?: boolean;
+  onChange?: (checked: boolean) => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-4 border-b border-white/[0.05] py-3.5 last:border-0">
@@ -694,7 +697,53 @@ function ToggleRow({
         <p className="text-sm font-medium text-zinc-200">{label}</p>
         <p className="mt-0.5 text-xs text-zinc-600">{description}</p>
       </div>
-      <Switch defaultChecked={defaultChecked} className="flex-shrink-0" />
+      <Switch defaultChecked={defaultChecked} onCheckedChange={onChange} className="flex-shrink-0" />
+    </div>
+  );
+}
+
+function MarketingConsentToggle() {
+  const [consent, setConsent] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    // Load current consent from user session or API
+    fetch("/api/user/marketing-consent")
+      .then((r) => r.json())
+      .then((d) => {
+        if (typeof d.marketingConsent === "boolean") setConsent(d.marketingConsent);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleChange = async (checked: boolean) => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/user/marketing-consent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ consent: checked }),
+      });
+      if (res.ok) {
+        setConsent(checked);
+        toast.success(checked ? "Subscribed to founder updates" : "Unsubscribed from marketing emails");
+      }
+    } catch {
+      toast.error("Failed to update preference");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-white/[0.05] py-3.5 last:border-0">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-amber-200">Founder & Marketing Emails</p>
+        <p className="mt-0.5 text-xs text-zinc-600">
+          Receive founder updates, platform announcements, promotional emails, and event invites.
+        </p>
+      </div>
+      <Switch checked={consent} onCheckedChange={handleChange} disabled={saving} className="flex-shrink-0" />
     </div>
   );
 }

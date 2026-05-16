@@ -17,6 +17,7 @@ export const dynamic = "force-dynamic";
 
 type CheckoutRequestBody = {
   planId?: unknown;
+  referralCode?: unknown;
 };
 
 function jsonError(message: string, status = 400): NextResponse {
@@ -116,6 +117,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    const checkoutMetadata: Record<string, string> = {
+      userId: session.user.id,
+      planId: plan.id,
+    };
+    const referralCode = typeof body.referralCode === "string" ? body.referralCode.trim() : undefined;
+    if (referralCode) {
+      checkoutMetadata.referralCode = referralCode;
+    }
+
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
@@ -124,14 +134,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       success_url: buildCheckoutSuccessUrl(baseUrl, plan.id),
       cancel_url: buildCheckoutCancelUrl(baseUrl, plan.id),
       client_reference_id: session.user.id,
-      metadata: {
-        userId: session.user.id,
-        planId: plan.id,
-      },
+      metadata: checkoutMetadata,
       subscription_data: {
         metadata: {
           userId: session.user.id,
           planId: plan.id,
+          ...(referralCode ? { referralCode } : {}),
         },
       },
       line_items: [

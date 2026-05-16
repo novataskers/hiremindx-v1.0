@@ -1,7 +1,7 @@
-import { sql, eq, inArray } from "drizzle-orm";
+import { sql, eq, inArray, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { betaSignups } from "@/db/schema";
+import { betaSignups, referrals } from "@/db/schema";
 import { getStripeClient } from "@/lib/stripe";
 import { getBaseURL } from "@/lib/auth";
 import { normalizeBaseUrl } from "@/lib/billing";
@@ -19,7 +19,7 @@ function jsonError(message: string, status = 400): NextResponse {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    let body: { name?: string; email?: string };
+    let body: { name?: string; email?: string; referralCode?: string; marketingConsent?: boolean };
     try {
       body = await request.json();
     } catch {
@@ -28,6 +28,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const referralCode = typeof body.referralCode === "string" ? body.referralCode.trim() : undefined;
+    const marketingConsent = body.marketingConsent === true;
 
     if (!name || name.length < 2) {
       return jsonError("Please enter your full name.");
@@ -46,6 +48,63 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (existing.length > 0) {
       return jsonError("This email is already registered for beta access.", 409);
+    }
+
+    // ── Referral code validation ──
+    let referrerStripeCustomerId: string | undefined;
+    if (referralCode) {
+      const referrerRows = await db
+        .select({
+          email: betaSignups.email,
+          status: betaSignups.status,
+          userId: betaSignups.userId,
+          stripeCustomerId: betaSignups.stripeCustomerId,
+        })
+        .from(betaSignups)
+        .where(eq(betaSignups.referralCode, referralCode))
+        .limit(1);
+
+      const referrer = referrerRows[0];
+      if (!referrer) {
+        return jsonError("Invalid referral code.", 400);
+      }
+
+      // Self-referral guard
+      if (referrer.email === email) {
+        return jsonError("Cannot refer yourself.", 409);
+      }
+
+      // Referrer must be active or trialing
+      if (!["trialing", "active"].includes(referrer.status ?? "")) {
+        return jsonError("Referral link is no longer active.", 409);
+      }
+
+      // Quota guard: max 10 paid referrals
+      const paidCountResult = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(referrals)
+        .where(and(eq(referrals.referralCode, referralCode), eq(referrals.status, "paid")));
+
+      const paidCount = Number(paidCountResult[0]?.count ?? 0);
+      if (paidCount >= 10) {
+        return NextResponse.json(
+          { error: "Referral Link Expired", expired: true },
+          { status: 409 },
+        );
+      }
+
+      // Duplicate referral guard
+      const dupCheck = await db
+        .select({ id: referrals.id })
+        .from(referrals)
+        .where(and(eq(referrals.referralCode, referralCode), eq(referrals.referredEmail, email)))
+        .limit(1);
+
+      if (dupCheck.length > 0) {
+        return jsonError("Already referred with this link.", 409);
+      }
+
+      referrerStripeCustomerId = referrer.stripeCustomerId ?? undefined;
     }
 
     // Count active/trialing signups only (exclude pending and canceled)
@@ -75,23 +134,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const baseUrl = getBaseURL();
     const signupOrder = taken + 1;
 
+    const checkoutMetadata: Record<string, string> = {
+      betaSignup: "true",
+      betaEmail: email,
+      planId: "beta_elite",
+    };
+    if (referralCode) {
+      checkoutMetadata.referralCode = referralCode;
+    }
+
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
       customer: customer.id,
       success_url: `${normalizeBaseUrl(baseUrl)}/join-beta?success=1&order=${signupOrder}`,
       cancel_url: `${normalizeBaseUrl(baseUrl)}/join-beta?canceled=1`,
-      metadata: {
-        betaSignup: "true",
-        betaEmail: email,
-        planId: "beta_elite",
-      },
+      metadata: checkoutMetadata,
       subscription_data: {
         trial_period_days: BETA_TRIAL_DAYS,
         metadata: {
           betaSignup: "true",
           betaEmail: email,
           planId: "beta_elite",
+          ...(referralCode ? { referralCode } : {}),
         },
       },
       line_items: [
@@ -122,6 +187,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       stripeCustomerId: customer.id,
       stripeCheckoutSessionId: checkoutSession.id,
       status: "pending",
+      marketingConsent,
+      marketingConsentAt: marketingConsent ? new Date().toISOString() : null,
       createdAt: new Date().toISOString(),
     });
 

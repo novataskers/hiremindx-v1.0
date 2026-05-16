@@ -23,6 +23,7 @@ export default function BetaSignupModal({
 }: BetaSignupModalProps) {
   const [name, setName] = useState(prefillName);
   const [email, setEmail] = useState(prefillEmail);
+  const [marketingConsent, setMarketingConsent] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
 
   // Sync prefill values when session loads asynchronously
@@ -60,7 +61,7 @@ export default function BetaSignupModal({
       const res = await fetch("/api/beta/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmedName, email: trimmedEmail }),
+        body: JSON.stringify({ name: trimmedName, email: trimmedEmail, marketingConsent }),
       });
 
       const data = await res.json();
@@ -199,8 +200,22 @@ export default function BetaSignupModal({
               {isLoading ? "Processing..." : "Continue to Payment"}
             </button>
 
+            {/* Marketing consent */}
+            <div className="mt-4 flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/[0.03] border border-amber-500/10 w-full">
+              <input
+                id="marketing-consent"
+                type="checkbox"
+                checked={marketingConsent}
+                onChange={(e) => setMarketingConsent(e.target.checked)}
+                className="mt-0.5 w-3.5 h-3.5 rounded border-zinc-600 bg-black text-amber-500 focus:ring-amber-500/30 cursor-pointer"
+              />
+              <label htmlFor="marketing-consent" className="text-[10px] leading-relaxed text-zinc-500 cursor-pointer select-none">
+                By continuing to payment and signing up as a founding member, you agree to receive promotional emails, founder updates, platform updates, event announcements, and future HireMindX communications related to your founder membership and the future of HireMindX.
+              </label>
+            </div>
+
             {/* Info */}
-            <div className="mt-4 flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] w-full">
+            <div className="mt-3 flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] w-full">
               <Shield className="w-3.5 h-3.5 flex-shrink-0 text-zinc-600" />
               <p className="text-[10px] leading-relaxed text-zinc-600">
                 You&apos;ll be redirected to Stripe to securely enter your card details. No charge for 14 days.
@@ -208,7 +223,7 @@ export default function BetaSignupModal({
             </div>
 
             {/* Footer */}
-            <p className="text-center text-[9px] uppercase tracking-[0.2em] leading-relaxed mt-6 text-zinc-700">
+            <p className="text-center text-[9px] uppercase tracking-[0.2em] leading-relaxed mt-5 text-zinc-700">
               By continuing, you agree to our Terms & Privacy Policy
             </p>
 

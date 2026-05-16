@@ -19,6 +19,8 @@ export const user = sqliteTable("user", {
     .$defaultFn(() => new Date())
     .notNull(),
   lastSeen: integer("last_seen"),
+  marketingConsent: integer("marketing_consent", { mode: "boolean" }).notNull().default(false),
+  marketingConsentAt: integer("marketing_consent_at", { mode: "timestamp" }),
 });
 
 export const session = sqliteTable("session", {
@@ -641,5 +643,35 @@ export const betaSignups = sqliteTable('beta_signups', {
   stripeSubscriptionId: text('stripe_subscription_id'),
   stripeCheckoutSessionId: text('stripe_checkout_session_id'),
   status: text('status').notNull().default('pending'), // pending, trialing, active, canceled, expired
+  referralCode: text('referral_code').unique(),
+  welcomeEmailSent: integer('welcome_email_sent', { mode: 'boolean' }).notNull().default(false),
+  marketingConsent: integer('marketing_consent', { mode: 'boolean' }).notNull().default(false),
+  marketingConsentAt: text('marketing_consent_at'),
   createdAt: text('created_at').notNull(),
+});
+
+// Referrals — tracks who used a founder's referral link
+export const referrals = sqliteTable('referrals', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  referrerId: text('referrer_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  referralCode: text('referral_code').notNull(),
+  referredEmail: text('referred_email').notNull(),
+  referredUserId: text('referred_user_id').references(() => user.id, { onDelete: 'set null' }),
+  stripeSubscriptionId: text('stripe_subscription_id'),
+  status: text('status').notNull().default('pending'), // pending, trialing, paid, refunded, canceled
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+// Founder Rewards — tracks free months, badge, and private access
+export const founderRewards = sqliteTable('founder_rewards', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: text('user_id').notNull().unique().references(() => user.id, { onDelete: 'cascade' }),
+  freeMonthsGranted: integer('free_months_granted').notNull().default(0),
+  freeMonthsUsed: integer('free_months_used').notNull().default(0),
+  freeMonthsPending: integer('free_months_pending').notNull().default(0),
+  badgeGranted: integer('badge_granted', { mode: 'boolean' }).notNull().default(false),
+  privateAccessGranted: integer('private_access_granted', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
 });

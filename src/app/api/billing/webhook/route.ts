@@ -1,11 +1,14 @@
 import Stripe from "stripe";
-import { eq } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { subscriptions, user, betaSignups } from "@/db/schema";
+import { subscriptions, user, betaSignups, founderRewards, referrals } from "@/db/schema";
 import { getBillingPlan } from "@/lib/billing";
 import { getStripeClient } from "@/lib/stripe";
 import { sendHireMindXEmailNotification } from "@/lib/email";
+import { randomUUID } from "crypto";
+
+const BETA_ELITE_AMOUNT_PENCE = 999; // £9.99/month
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -299,6 +302,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           const stripeSubscription = subscriptionId ? await stripe.subscriptions.retrieve(subscriptionId) : null;
           const betaStatus = stripeSubscription?.status === "trialing" ? "trialing" : stripeSubscription?.status === "active" ? "active" : "active";
 
+          // Fetch current beta signup to check existing referral code & email status
+          const betaRows = await db
+            .select({
+              id: betaSignups.id,
+              name: betaSignups.name,
+              signupOrder: betaSignups.signupOrder,
+              referralCode: betaSignups.referralCode,
+              welcomeEmailSent: betaSignups.welcomeEmailSent,
+              userId: betaSignups.userId,
+            })
+            .from(betaSignups)
+            .where(eq(betaSignups.email, betaEmail))
+            .limit(1);
+
+          const betaRow = betaRows[0];
+          let referralCode = betaRow?.referralCode ?? null;
+
+          // Generate referral code if not already set
+          if (!referralCode) {
+            referralCode = randomUUID().replace(/-/g, "").slice(0, 12);
+            await db
+              .update(betaSignups)
+              .set({ referralCode })
+              .where(eq(betaSignups.email, betaEmail));
+          }
+
           await db
             .update(betaSignups)
             .set({
@@ -318,6 +347,51 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
           if (userRows[0]) {
             await linkBetaSignup(userRows[0].id, betaEmail);
+          }
+
+          // Send welcome email once
+          if (betaRow && !betaRow.welcomeEmailSent && betaRow.name) {
+            try {
+              const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || "https://www.hiremindx.com";
+              await sendHireMindXEmailNotification({
+                to: betaEmail,
+                subject: `Welcome to HireMindX — You're Founding Member #${betaRow.signupOrder}!`,
+                title: "You're One of the First 100",
+                summary: `Congratulations ${betaRow.name}, you've secured your place as Founding Member #${betaRow.signupOrder} of HireMindX. Your 14-day free Elite trial has started, and you're locked in at £9.99/month (50% off) for life.`,
+                previewText: `Welcome to HireMindX — You're Founding Member #${betaRow.signupOrder}!`,
+                ctaLabel: "Start Using HireMindX",
+                ctaUrl: "/assist",
+                recipientName: betaRow.name,
+                metadata: [
+                  { label: "Founder Number", value: `#${betaRow.signupOrder}` },
+                  { label: "Plan", value: "Elite (Founding Member)" },
+                  { label: "Price", value: "£9.99/month (50% off for life)" },
+                  { label: "Free Trial", value: "14 days" },
+                  { label: "Referral Link", value: `${siteUrl.replace(/\/$/, "")}/join-beta?ref=${referralCode}` },
+                  { label: "Referral Rewards", value: "Refer 1 = 1 free month | 5 = 3 more | 10 = 6 more + Badge + VIP Access" },
+                ],
+              });
+
+              await db
+                .update(betaSignups)
+                .set({ welcomeEmailSent: true })
+                .where(eq(betaSignups.email, betaEmail));
+            } catch (emailError) {
+              console.error("[stripe-webhook] Welcome email failed:", emailError);
+            }
+          }
+
+          // Ensure founderRewards row exists for linked user
+          const linkedUserId = userRows[0]?.id ?? betaRow?.userId;
+          if (linkedUserId) {
+            await db
+              .insert(founderRewards)
+              .values({
+                userId: linkedUserId,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              })
+              .onConflictDoNothing();
           }
 
           console.log(`[stripe-webhook] Beta checkout completed for ${betaEmail}`);
@@ -341,6 +415,55 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           stripeCheckoutSessionId: session.id,
           checkoutPlanId: typeof session.metadata?.planId === "string" ? session.metadata.planId : null,
         });
+
+        // ── Referral tracking for regular Elite checkout ──
+        const referralCode = typeof session.metadata?.referralCode === "string" ? session.metadata.referralCode : undefined;
+        const planId = typeof session.metadata?.planId === "string" ? session.metadata.planId : null;
+        if (referralCode && planId === "elite" && customerId) {
+          const customer = await stripe.customers.retrieve(customerId);
+          const referredEmail = typeof customer === "object" ? customer.email ?? null : null;
+          if (referredEmail) {
+            const normalizedEmail = referredEmail.trim().toLowerCase();
+            // Look up referrer by code
+            const referrerRows = await db
+              .select({ userId: betaSignups.userId, email: betaSignups.email })
+              .from(betaSignups)
+              .where(eq(betaSignups.referralCode, referralCode))
+              .limit(1);
+            const referrer = referrerRows[0];
+            if (referrer && referrer.userId && referrer.email !== normalizedEmail) {
+              // Create or update referrals row
+              const existingRef = await db
+                .select({ id: referrals.id })
+                .from(referrals)
+                .where(and(eq(referrals.referralCode, referralCode), eq(referrals.referredEmail, normalizedEmail)))
+                .limit(1);
+              if (!existingRef[0]) {
+                await db.insert(referrals).values({
+                  referrerId: referrer.userId,
+                  referralCode,
+                  referredEmail: normalizedEmail,
+                  referredUserId: userId,
+                  stripeSubscriptionId: subscriptionId,
+                  status: stripeSubscription.status === "trialing" ? "trialing" : "pending",
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                });
+              } else {
+                await db
+                  .update(referrals)
+                  .set({
+                    referredUserId: userId,
+                    stripeSubscriptionId: subscriptionId,
+                    status: stripeSubscription.status === "trialing" ? "trialing" : "pending",
+                    updatedAt: new Date().toISOString(),
+                  })
+                  .where(eq(referrals.id, existingRef[0].id));
+              }
+              console.log(`[stripe-webhook] Referral tracked: ${referralCode} → ${normalizedEmail}`);
+            }
+          }
+        }
 
         // Send activation email if subscription is active
         if (stripeSubscription.status === "active" || stripeSubscription.status === "trialing") {
@@ -486,6 +609,159 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         });
 
         await sendSubscriptionCanceledEmail(userId);
+        break;
+      }
+
+      case "invoice.paid": {
+        const invoice = event.data.object as Stripe.Invoice;
+        const subscriptionId = typeof invoice.subscription === "string" ? invoice.subscription : null;
+        if (!subscriptionId) break;
+
+        const stripeSubscription = await stripe.subscriptions.retrieve(subscriptionId);
+        const referralCode = typeof stripeSubscription.metadata?.referralCode === "string" ? stripeSubscription.metadata.referralCode : undefined;
+        if (!referralCode) break;
+
+        const customerId = typeof stripeSubscription.customer === "string" ? stripeSubscription.customer : null;
+        if (!customerId) break;
+
+        const customer = await stripe.customers.retrieve(customerId);
+        const referredEmail = typeof customer === "object" ? customer.email ?? null : null;
+        if (!referredEmail) break;
+
+        const normalizedEmail = referredEmail.trim().toLowerCase();
+
+        // Update referral status to paid
+        const refRows = await db
+          .select({ id: referrals.id, referrerId: referrals.referrerId })
+          .from(referrals)
+          .where(and(eq(referrals.referralCode, referralCode), eq(referrals.referredEmail, normalizedEmail)))
+          .limit(1);
+
+        if (!refRows[0]) break;
+        const ref = refRows[0];
+
+        // Only process if transitioning to paid for first time
+        if (ref.referrerId) {
+          await db
+            .update(referrals)
+            .set({ status: "paid", updatedAt: new Date().toISOString() })
+            .where(eq(referrals.id, ref.id));
+
+          // Count paid referrals for this referrer
+          const paidCountResult = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(referrals)
+            .where(and(eq(referrals.referrerId, ref.referrerId), eq(referrals.status, "paid")));
+          const paidCount = Number(paidCountResult[0]?.count ?? 0);
+
+          // Determine milestone reward
+          let newFreeMonths = 0;
+          let grantBadge = false;
+          let grantPrivateAccess = false;
+
+          // Additive milestones: check which threshold was just crossed
+          // We reward at exact counts: 1, 5, 10
+          if (paidCount === 1) newFreeMonths = 1;
+          else if (paidCount === 5) newFreeMonths = 3;
+          else if (paidCount === 10) {
+            newFreeMonths = 6;
+            grantBadge = true;
+            grantPrivateAccess = true;
+          }
+
+          if (newFreeMonths > 0 || grantBadge || grantPrivateAccess) {
+            // Get or create founderRewards row
+            const rewardRows = await db
+              .select()
+              .from(founderRewards)
+              .where(eq(founderRewards.userId, ref.referrerId))
+              .limit(1);
+            let reward = rewardRows[0];
+            if (!reward) {
+              await db.insert(founderRewards).values({
+                userId: ref.referrerId,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              });
+              const newRows = await db
+                .select()
+                .from(founderRewards)
+                .where(eq(founderRewards.userId, ref.referrerId))
+                .limit(1);
+              reward = newRows[0];
+            }
+
+            if (reward) {
+              const updates: Partial<typeof founderRewards.$inferInsert> = {
+                updatedAt: new Date().toISOString(),
+              };
+              if (newFreeMonths > 0) {
+                updates.freeMonthsGranted = (reward.freeMonthsGranted ?? 0) + newFreeMonths;
+                updates.freeMonthsPending = (reward.freeMonthsPending ?? 0) + newFreeMonths;
+              }
+              if (grantBadge) updates.badgeGranted = true;
+              if (grantPrivateAccess) updates.privateAccessGranted = true;
+
+              await db
+                .update(founderRewards)
+                .set(updates)
+                .where(eq(founderRewards.userId, ref.referrerId));
+
+              // Apply Stripe invoice credit for free months
+              const referrerBetaRows = await db
+                .select({ stripeCustomerId: betaSignups.stripeCustomerId })
+                .from(betaSignups)
+                .where(eq(betaSignups.userId, ref.referrerId))
+                .limit(1);
+              const referrerStripeCustomerId = referrerBetaRows[0]?.stripeCustomerId;
+              if (referrerStripeCustomerId && newFreeMonths > 0) {
+                try {
+                  const creditAmountPence = newFreeMonths * BETA_ELITE_AMOUNT_PENCE; // £9.99 per month
+                  await stripe.customers.createBalanceTransaction(referrerStripeCustomerId, {
+                    amount: -creditAmountPence,
+                    currency: "gbp",
+                    description: `Referral reward — ${newFreeMonths} free month(s) for reaching ${paidCount} referrals`,
+                  });
+                  // Move pending → used
+                  await db
+                    .update(founderRewards)
+                    .set({
+                      freeMonthsPending: (reward.freeMonthsPending ?? 0),
+                      freeMonthsUsed: (reward.freeMonthsUsed ?? 0) + newFreeMonths,
+                      updatedAt: new Date().toISOString(),
+                    })
+                    .where(eq(founderRewards.userId, ref.referrerId));
+                  console.log(`[stripe-webhook] Applied ${newFreeMonths} free month credit to referrer ${ref.referrerId}`);
+                } catch (creditError) {
+                  console.error("[stripe-webhook] Failed to apply referral credit:", creditError);
+                }
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case "customer.subscription.updated": {
+        const stripeSubscription = event.data.object as Stripe.Subscription;
+        // Handle referral refunds — if a referred user's subscription is canceled/refunded,
+        // mark the referral as refunded so future rewards are not granted from this user
+        if (stripeSubscription.metadata?.referralCode && stripeSubscription.status === "canceled") {
+          const customerId = typeof stripeSubscription.customer === "string" ? stripeSubscription.customer : null;
+          if (customerId) {
+            const customer = await stripe.customers.retrieve(customerId);
+            const referredEmail = typeof customer === "object" ? customer.email ?? null : null;
+            if (referredEmail) {
+              const normalizedEmail = referredEmail.trim().toLowerCase();
+              const refCode = stripeSubscription.metadata.referralCode;
+              await db
+                .update(referrals)
+                .set({ status: "refunded", updatedAt: new Date().toISOString() })
+                .where(and(eq(referrals.referralCode, refCode), eq(referrals.referredEmail, normalizedEmail)));
+              console.log(`[stripe-webhook] Referral marked as refunded: ${refCode} → ${normalizedEmail}`);
+            }
+          }
+        }
         break;
       }
 
