@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Loader2, Layers3, X, Sparkles, Shield } from "lucide-react";
+import { Loader2, Layers3, X, Sparkles, Crown } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -23,7 +23,7 @@ export default function BetaSignupModal({
 }: BetaSignupModalProps) {
   const [name, setName] = useState(prefillName);
   const [email, setEmail] = useState(prefillEmail);
-  const [marketingConsent, setMarketingConsent] = useState(true);
+  const marketingConsent = true;
   const [isLoading, setIsLoading] = useState(false);
 
   // Sync prefill values when session loads asynchronously
@@ -126,7 +126,7 @@ export default function BetaSignupModal({
 
             {/* Badge */}
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/[0.06] border border-amber-500/15 mb-6">
-              <Sparkles className="w-3 h-3 text-amber-400" />
+              <Crown className="w-3 h-3 text-amber-400" />
               <span className="text-[9px] font-bold tracking-[0.3em] uppercase text-amber-400">
                 Founding Member
               </span>
@@ -202,32 +202,6 @@ export default function BetaSignupModal({
               {isLoading ? "Processing..." : "Continue to Payment"}
             </button>
 
-            {/* Marketing consent */}
-            <div className="mt-4 flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/[0.03] border border-amber-500/10 w-full">
-              <input
-                id="marketing-consent"
-                type="checkbox"
-                checked={marketingConsent}
-                onChange={(e) => setMarketingConsent(e.target.checked)}
-                className="mt-0.5 w-3.5 h-3.5 rounded border-zinc-600 bg-black text-amber-500 focus:ring-amber-500/30 cursor-pointer"
-              />
-              <label htmlFor="marketing-consent" className="text-[10px] leading-relaxed text-zinc-500 cursor-pointer select-none">
-                By continuing to payment and signing up as a founding member, you agree to receive promotional emails, founder updates, platform updates, event announcements, and future HireMindX communications related to your founder membership and the future of HireMindX.
-              </label>
-            </div>
-
-            {/* Info */}
-            <div className="mt-3 flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] w-full">
-              <Shield className="w-3.5 h-3.5 flex-shrink-0 text-zinc-600" />
-              <p className="text-[10px] leading-relaxed text-zinc-600">
-                You&apos;ll be redirected to Stripe to securely enter your card details. No charge for 14 days.
-              </p>
-            </div>
-
-            {/* Footer */}
-            <p className="text-center text-[9px] uppercase tracking-[0.2em] leading-relaxed mt-5 text-zinc-700">
-              By continuing, you agree to our Terms & Privacy Policy
-            </p>
 
           </form>
         </div>
