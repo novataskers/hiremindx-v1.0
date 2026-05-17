@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { subscriptions, user, betaSignups, founderRewards, referrals } from "@/db/schema";
 import { getBillingPlan } from "@/lib/billing";
 import { getStripeClient } from "@/lib/stripe";
-import { sendHireMindXEmailNotification } from "@/lib/email";
+import { sendHireMindXEmailNotification, sendBetaWelcomeEmail } from "@/lib/email";
 import { randomUUID } from "crypto";
 
 const BETA_ELITE_AMOUNT_PENCE = 999; // £9.99/month
