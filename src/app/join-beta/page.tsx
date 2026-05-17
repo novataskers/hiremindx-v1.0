@@ -563,17 +563,17 @@ function JoinBetaContent() {
                 </motion.div>
               )}
 
-              {/* Go to Dashboard */}
+              {/* Go to Premium */}
               <button
-                onClick={() => router.push("/assist")}
+                onClick={() => router.push("/premium")}
                 className="w-full h-11 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
                 style={{
                   background: "linear-gradient(135deg, #c8960c, #f5d060)",
                   color: "#000",
                 }}
               >
-                <Rocket className="w-4 h-4" />
-                Go to Dashboard
+                <Crown className="w-4 h-4" />
+                Go to premium page
               </button>
             </div>
           ) : hasPending ? (
@@ -615,7 +615,7 @@ function JoinBetaContent() {
                   : "Sign in with the same email to activate your Elite access."}
               </p>
               <button
-                onClick={() => router.push(session?.user ? "/assist" : "/login")}
+                onClick={() => router.push(session?.user ? "/premium" : "/login")}
                 className="w-full h-11 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
                 style={{
                   background: "linear-gradient(135deg, #c8960c, #f5d060)",
@@ -624,8 +624,8 @@ function JoinBetaContent() {
               >
                 {session?.user ? (
                   <>
-                    <Rocket className="w-4 h-4" />
-                    Go to Dashboard
+                    <Crown className="w-4 h-4" />
+                    Go to premium page
                   </>
                 ) : (
                   <>
@@ -752,15 +752,15 @@ function JoinBetaContent() {
 
             {isMember ? (
               <button
-                onClick={() => router.push("/assist")}
+                onClick={() => router.push("/premium")}
                 className="w-full h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
                 style={{
                   background: "linear-gradient(135deg, #c8960c, #f5d060)",
                   color: "#000",
                 }}
               >
-                <Check className="w-4 h-4" />
-                You have this plan
+                <Crown className="w-4 h-4" />
+                Go to premium page
               </button>
             ) : hasPending ? (
               <button
