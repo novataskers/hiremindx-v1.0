@@ -1,8 +1,8 @@
-import { eq } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { subscriptions, betaSignups, user } from "@/db/schema";
+import { subscriptions, betaSignups, user, founderRewards, referrals } from "@/db/schema";
 import { isActiveSubscriptionStatus, isBetaPlan } from "@/lib/billing";
 import { getStripeClient } from "@/lib/stripe";
 import { sendHireMindXEmailNotification } from "@/lib/email";
@@ -84,6 +84,54 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       await db
         .delete(betaSignups)
         .where(eq(betaSignups.userId, session.user.id));
+
+      // Delete founder rewards for the user
+      await db
+        .delete(founderRewards)
+        .where(eq(founderRewards.userId, session.user.id));
+
+      // Reverse referrer rewards if this user was referred by someone
+      if (userEmail) {
+        const refRows = await db
+          .select()
+          .from(referrals)
+          .where(eq(referrals.referredEmail, userEmail))
+          .limit(1);
+
+        const ref = refRows[0];
+        if (ref?.referrerId) {
+          // Reverse free month granted to referrer
+          const referrerRewardRows = await db
+            .select()
+            .from(founderRewards)
+            .where(eq(founderRewards.userId, ref.referrerId))
+            .limit(1);
+
+          const referrerReward = referrerRewardRows[0];
+          if (referrerReward) {
+            const decrementedFreeMonths = Math.max(0, (referrerReward.freeMonthsGranted ?? 0) - 1);
+            await db
+              .update(founderRewards)
+              .set({
+                freeMonthsGranted: decrementedFreeMonths,
+                updatedAt: new Date().toISOString(),
+              })
+              .where(eq(founderRewards.userId, ref.referrerId));
+            console.log(`[billing/cancel] Reversed 1 free month from referrer ${ref.referrerId}`);
+          }
+
+          // Mark referral as canceled
+          await db
+            .update(referrals)
+            .set({ status: "canceled", updatedAt: new Date().toISOString() })
+            .where(eq(referrals.id, ref.id));
+        }
+      }
+
+      // Delete referrals where this user was the referred person
+      await db
+        .delete(referrals)
+        .where(eq(referrals.referredUserId, session.user.id));
 
       await sendCancellationEmail(session.user.id);
 

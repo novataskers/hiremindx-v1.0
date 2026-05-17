@@ -547,13 +547,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (stripeSubscription.metadata?.betaSignup === "true" && stripeSubscription.metadata?.betaEmail) {
           const betaEmail = stripeSubscription.metadata.betaEmail.trim().toLowerCase();
 
-          // Mark beta_signups row as canceled (safety net — cancel endpoint may have already deleted it)
-          await db
-            .update(betaSignups)
-            .set({ status: "canceled" })
-            .where(eq(betaSignups.email, betaEmail));
-
-          // Check if subscription row still exists (cancel endpoint deletes it for trial cancellations)
+          // Find the userId before deleting (needed for cleanup)
           const betaRows = await db
             .select({ userId: betaSignups.userId })
             .from(betaSignups)
@@ -561,24 +555,61 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             .limit(1);
 
           const betaUserId = betaRows[0]?.userId;
+
+          // Delete beta_signups row (fully release quota slot)
+          await db
+            .delete(betaSignups)
+            .where(eq(betaSignups.email, betaEmail));
+
           if (betaUserId) {
-            const existingSub = await db
-              .select({ id: subscriptions.id })
-              .from(subscriptions)
-              .where(eq(subscriptions.userId, betaUserId))
+            // Delete subscription row if it exists
+            await db
+              .delete(subscriptions)
+              .where(eq(subscriptions.userId, betaUserId));
+
+            // Delete founder rewards
+            await db
+              .delete(founderRewards)
+              .where(eq(founderRewards.userId, betaUserId));
+
+            // Reverse referrer rewards if this user was referred
+            const refRows = await db
+              .select()
+              .from(referrals)
+              .where(eq(referrals.referredEmail, betaEmail))
               .limit(1);
 
-            // Only update if the row still exists — do NOT re-create it
-            if (existingSub[0]) {
+            const ref = refRows[0];
+            if (ref?.referrerId) {
+              const referrerRewardRows = await db
+                .select()
+                .from(founderRewards)
+                .where(eq(founderRewards.userId, ref.referrerId))
+                .limit(1);
+
+              const referrerReward = referrerRewardRows[0];
+              if (referrerReward) {
+                const decrementedFreeMonths = Math.max(0, (referrerReward.freeMonthsGranted ?? 0) - 1);
+                await db
+                  .update(founderRewards)
+                  .set({
+                    freeMonthsGranted: decrementedFreeMonths,
+                    updatedAt: new Date().toISOString(),
+                  })
+                  .where(eq(founderRewards.userId, ref.referrerId));
+              }
+
+              // Mark referral as canceled then delete
               await db
-                .update(subscriptions)
-                .set({
-                  status: "canceled",
-                  cancelAtPeriodEnd: false,
-                  updatedAt: new Date(),
-                })
-                .where(eq(subscriptions.userId, betaUserId));
+                .update(referrals)
+                .set({ status: "canceled", updatedAt: new Date().toISOString() })
+                .where(eq(referrals.id, ref.id));
             }
+
+            // Delete referrals where this user was the referred person
+            await db
+              .delete(referrals)
+              .where(eq(referrals.referredUserId, betaUserId));
 
             await sendSubscriptionCanceledEmail(betaUserId);
           }
