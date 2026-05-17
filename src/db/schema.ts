@@ -5,7 +5,7 @@ import { sqliteTable, integer, text } from 'drizzle-orm/sqlite-core';
 // Auth tables for better-auth
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),
-  name: text("name").notNull(),
+  name: text("name"),
   email: text("email").notNull().unique(),
   emailVerified: integer("email_verified", { mode: "boolean" })
     .$defaultFn(() => false)
@@ -53,6 +53,8 @@ export const account = sqliteTable("account", {
     mode: "timestamp",
   }),
   scope: text("scope"),
+  scopes: text("scopes"),
+  tokenType: text("token_type"),
   password: text("password"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
