@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { betaSignups, referrals } from "@/db/schema";
 import { getStripeClient } from "@/lib/stripe";
-import { getBaseURL } from "@/lib/auth";
+import { getBaseURL, auth } from "@/lib/auth";
 import { normalizeBaseUrl } from "@/lib/billing";
 
 export const runtime = "nodejs";
@@ -19,6 +19,15 @@ function jsonError(message: string, status = 400): NextResponse {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
+    // Require authentication
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user?.email) {
+      return jsonError("Unauthorized. Please sign in first.", 401);
+    }
+
+    const sessionEmail = session.user.email.trim().toLowerCase();
+    const sessionName = session.user.name?.trim() ?? "";
+
     let body: { name?: string; email?: string; referralCode?: string; marketingConsent?: boolean };
     try {
       body = await request.json();
@@ -26,17 +35,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return jsonError("Invalid request body");
     }
 
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    // Use session name/email, fallback to body for name only
+    const name = sessionName || (typeof body.name === "string" ? body.name.trim() : "");
+    const email = sessionEmail;
     const referralCode = typeof body.referralCode === "string" ? body.referralCode.trim() : undefined;
     const marketingConsent = body.marketingConsent === true;
 
     if (!name || name.length < 2) {
       return jsonError("Please enter your full name.");
-    }
-
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return jsonError("Please enter a valid email address.");
     }
 
     // Check if email already signed up

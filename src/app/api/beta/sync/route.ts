@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { betaSignups, user } from "@/db/schema";
 import { getStripeClient } from "@/lib/stripe";
+import { auth } from "@/lib/auth";
 import { randomUUID } from "crypto";
 
 export const runtime = "nodejs";
@@ -10,13 +11,22 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const body = await request.json().catch(() => ({}));
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : null;
-
-    if (!email) {
-      return NextResponse.json({ error: "Email required" }, { status: 400 });
+    // Require authentication
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const body = await request.json().catch(() => ({}));
+    const requestedEmail = typeof body.email === "string" ? body.email.trim().toLowerCase() : null;
+
+    // Only allow syncing the authenticated user's own email
+    const sessionEmail = session.user.email.trim().toLowerCase();
+    if (requestedEmail !== sessionEmail) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    }
+
+    const email = sessionEmail;
     console.log("[beta-sync] Sync requested for:", email);
 
     // Look up beta signup

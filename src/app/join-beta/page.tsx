@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { Layers3, Sparkles, Shield, Zap, Crown, Check, Users, Rocket, ChevronRight, Link2, Copy, Gift, Award, Star, Lock } from "lucide-react";
 import { toast } from "sonner";
 import BetaSignupModal from "@/components/BetaSignupModal";
+import SignInModal from "@/components/SignInModal";
 
 type BetaStatus = {
   total: number;
@@ -75,6 +76,17 @@ function JoinBetaContent() {
   const [checkoutOrder, setCheckoutOrder] = useState<string | null>(null);
   const [referralData, setReferralData] = useState<ReferralData | null>(null);
   const [referralExpired, setReferralExpired] = useState(false);
+  const [isSignInModalOpen, setIsSignInModalOpen] = useState(false);
+
+  // Auth gate: require sign-in before opening beta signup
+  const handleJoinBetaClick = () => {
+    if (isFull) return;
+    if (!session?.user) {
+      setIsSignInModalOpen(true);
+      return;
+    }
+    setIsModalOpen(true);
+  };
 
   // Static stars
   const stars = useMemo(() => {
@@ -577,7 +589,7 @@ function JoinBetaContent() {
                 Your checkout was started but not finished. Complete payment to secure your spot as a Founding Member.
               </p>
               <button
-                onClick={() => setIsModalOpen(true)}
+                onClick={handleJoinBetaClick}
                 className="w-full h-11 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
                 style={{
                   background: "linear-gradient(135deg, #c8960c, #f5d060)",
@@ -627,13 +639,13 @@ function JoinBetaContent() {
             /* ── Default signup CTAs ── */
             <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
               <button
-                onClick={() => !isFull && setIsModalOpen(true)}
+                onClick={handleJoinBetaClick}
                 disabled={isFull}
                 className="w-full sm:flex-1 h-12 rounded-2xl text-sm font-bold tracking-wide transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{
-                  background: isFull ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, #c8960c, #f5d060)",
-                  color: isFull ? "#71717a" : "#000",
-                  boxShadow: isFull ? "none" : "0 0 30px rgba(245,208,96,0.2)",
+                  background: "linear-gradient(135deg, #c8960c, #f5d060)",
+                  color: "#000",
+                  boxShadow: "0 0 24px rgba(245,208,96,0.15)",
                 }}
               >
                 <Sparkles className="w-4 h-4" />
@@ -641,7 +653,7 @@ function JoinBetaContent() {
               </button>
 
               <button
-                onClick={() => !isFull && setIsModalOpen(true)}
+                onClick={handleJoinBetaClick}
                 disabled={isFull}
                 className="w-full sm:flex-1 h-12 rounded-2xl text-sm font-semibold tracking-wide bg-white/[0.06] border border-white/[0.1] text-zinc-200 hover:bg-white/10 hover:text-white transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -752,7 +764,7 @@ function JoinBetaContent() {
               </button>
             ) : hasPending ? (
               <button
-                onClick={() => setIsModalOpen(true)}
+                onClick={handleJoinBetaClick}
                 className="w-full h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
                 style={{
                   background: "linear-gradient(135deg, #c8960c, #f5d060)",
@@ -764,7 +776,7 @@ function JoinBetaContent() {
               </button>
             ) : (
               <button
-                onClick={() => !(isFull || postCheckout) && setIsModalOpen(true)}
+                onClick={handleJoinBetaClick}
                 disabled={isFull || postCheckout}
                 className="w-full h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{
@@ -812,6 +824,13 @@ function JoinBetaContent() {
         onClose={() => setIsModalOpen(false)}
         prefillName={session?.user?.name ?? ""}
         prefillEmail={session?.user?.email ?? ""}
+      />
+
+      {/* ── SIGN IN MODAL ── */}
+      <SignInModal
+        isOpen={isSignInModalOpen}
+        onClose={() => setIsSignInModalOpen(false)}
+        redirectTo="/join-beta"
       />
 
       {/* ── SPARKLE ANIMATION KEYFRAMES ── */}
