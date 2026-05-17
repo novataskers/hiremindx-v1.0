@@ -367,7 +367,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (betaRow && !betaRow.welcomeEmailSent && betaRow.name) {
             try {
               const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || "https://www.hiremindx.com";
-              await sendHireMindXEmailNotification({
+              const trialEndDate = stripeSubscription?.current_period_end
+                ? new Date(stripeSubscription.current_period_end * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
+                : "14 days from now";
+              console.log(`[stripe-webhook] Sending welcome email to: ${betaEmail}, founder #${betaRow.signupOrder}`);
+              const emailResult = await sendHireMindXEmailNotification({
                 to: betaEmail,
                 subject: `Welcome to HireMindX — You're Founding Member #${betaRow.signupOrder}!`,
                 title: "You're One of the First 100",
@@ -381,10 +385,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                   { label: "Plan", value: "Elite (Founding Member)" },
                   { label: "Price", value: "£9.99/month (50% off for life)" },
                   { label: "Free Trial", value: "14 days" },
-                  { label: "Referral Link", value: `${siteUrl.replace(/\/$/, "")}/join-beta?ref=${referralCode}` },
+                  { label: "Trial Ends On", value: trialEndDate },
+                  { label: "Referral Link", value: `${siteUrl.replace(/\/$/, "")}/premium?ref=${referralCode}` },
                   { label: "Referral Rewards", value: "Refer 1 = 1 free month | 5 = 3 more | 10 = 6 more + Badge + VIP Access" },
                 ],
               });
+              console.log(`[stripe-webhook] Welcome email result: success=${emailResult.success}, skipped=${emailResult.skipped}, messageId=${emailResult.messageId}, error=${emailResult.error}`);
 
               await db
                 .update(betaSignups)

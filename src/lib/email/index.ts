@@ -352,19 +352,23 @@ export async function sendHireMindXEmailNotification(
   params: HireMindXEmailNotificationParams,
 ): Promise<HireMindXEmailSendResult> {
   const config = getSmtpConfig();
+  const missingVars: string[] = [];
+  if (!config.host) missingVars.push("NOTIFICATION_SMTP_HOST / HOSTINGER_SMTP_HOST");
+  if (!config.user) missingVars.push("NOTIFICATION_SMTP_USER / HOSTINGER_SMTP_USER");
+  if (!config.pass) missingVars.push("NOTIFICATION_SMTP_PASS / HOSTINGER_SMTP_PASSWORD");
 
-  if (!config.host || !config.user || !config.pass) {
-    console.warn("[HireMindX email] SMTP is not fully configured. Skipping email send.", {
-      hostConfigured: Boolean(config.host),
-      userConfigured: Boolean(config.user),
-      passConfigured: Boolean(config.pass),
+  console.log(`[HireMindX email] Attempting to send email to: ${params.to}, subject: "${params.subject || "(no subject)"}", smtpConfigured: ${missingVars.length === 0}`);
+
+  if (missingVars.length > 0) {
+    console.warn(`[HireMindX email] SMTP is not fully configured. Missing env vars: ${missingVars.join(", ")}. Skipping email send.`, {
       to: params.to,
+      subject: params.subject,
     });
 
     return {
       success: false,
       skipped: true,
-      error: "SMTP is not fully configured",
+      error: `SMTP is not fully configured. Missing: ${missingVars.join(", ")}`,
     };
   }
 
@@ -380,6 +384,8 @@ export async function sendHireMindXEmailNotification(
     });
 
     const rendered = renderHireMindXEmailTemplate(params);
+    console.log(`[HireMindX email] Rendered template. Sending via ${config.host}:${config.port} (secure=${config.secure})`);
+
     const info = await transporter.sendMail({
       from: `${config.fromName} <${config.fromEmail}>`,
       replyTo: config.replyTo,
@@ -389,15 +395,18 @@ export async function sendHireMindXEmailNotification(
       text: rendered.text,
     });
 
+    console.log(`[HireMindX email] Email sent successfully. messageId=${info.messageId}`);
+
     return {
       success: true,
       messageId: info.messageId,
     };
   } catch (error) {
     console.error("[HireMindX email] Failed to send notification email", {
-      error,
+      error: error instanceof Error ? error.message : error,
       to: params.to,
       subject: params.subject,
+      smtpHost: config.host,
     });
 
     return {

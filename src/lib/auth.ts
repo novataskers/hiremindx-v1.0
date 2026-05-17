@@ -77,6 +77,54 @@ export const auth = betterAuth({
 					} catch (e) {
 						console.error("[auth-hook] beta link failed:", e);
 					}
+
+					// Fallback: send welcome email if webhook already fired but user wasn't linked yet
+					try {
+						if (!user.email) return;
+						const { eq } = await import("drizzle-orm");
+						const { betaSignups } = await import("@/db/schema");
+						const { db } = await import("@/db");
+						const { sendHireMindXEmailNotification } = await import("@/lib/email");
+						const { randomUUID } = await import("crypto");
+						const betaEmail = user.email.trim().toLowerCase();
+						const betaRows = await db
+							.select()
+							.from(betaSignups)
+							.where(eq(betaSignups.email, betaEmail))
+							.limit(1);
+						const betaRow = betaRows[0];
+						if (betaRow && !betaRow.welcomeEmailSent && betaRow.name) {
+							let referralCode = betaRow.referralCode;
+							if (!referralCode) {
+								referralCode = randomUUID().replace(/-/g, "").slice(0, 12);
+								await db.update(betaSignups).set({ referralCode }).where(eq(betaSignups.email, betaEmail));
+							}
+							const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || "https://www.hiremindx.com";
+							console.log(`[auth-hook] Sending delayed welcome email to: ${betaEmail}, founder #${betaRow.signupOrder}`);
+							const emailResult = await sendHireMindXEmailNotification({
+								to: betaEmail,
+								subject: `Welcome to HireMindX — You're Founding Member #${betaRow.signupOrder}!`,
+								title: "You're One of the First 100",
+								summary: `Congratulations ${betaRow.name}, you've secured your place as Founding Member #${betaRow.signupOrder} of HireMindX. Your 14-day free Elite trial has started, and you're locked in at £9.99/month (50% off) for life.`,
+								previewText: `Welcome to HireMindX — You're Founding Member #${betaRow.signupOrder}!`,
+								ctaLabel: "Start Using HireMindX",
+								ctaUrl: "/assist",
+								recipientName: betaRow.name,
+								metadata: [
+									{ label: "Founder Number", value: `#${betaRow.signupOrder}` },
+									{ label: "Plan", value: "Elite (Founding Member)" },
+									{ label: "Price", value: "£9.99/month (50% off for life)" },
+									{ label: "Free Trial", value: "14 days" },
+									{ label: "Referral Link", value: `${siteUrl.replace(/\/$/, "")}/premium?ref=${referralCode}` },
+									{ label: "Referral Rewards", value: "Refer 1 = 1 free month | 5 = 3 more | 10 = 6 more + Badge + VIP Access" },
+								],
+							});
+							console.log(`[auth-hook] Welcome email result: success=${emailResult.success}, skipped=${emailResult.skipped}, messageId=${emailResult.messageId}, error=${emailResult.error}`);
+							await db.update(betaSignups).set({ welcomeEmailSent: true }).where(eq(betaSignups.email, betaEmail));
+						}
+					} catch (emailError) {
+						console.error("[auth-hook] Delayed welcome email failed:", emailError);
+					}
 				},
 			},
 		},
