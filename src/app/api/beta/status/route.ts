@@ -40,6 +40,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         isMember = true;
         memberOrder = betaRows[0].signupOrder;
         memberStatus = betaRows[0].status;
+
+        // Proactive sync: if pending, trigger background sync with Stripe
+        if (betaRows[0].status === "pending") {
+          try {
+            const syncRes = await fetch(new URL("/api/beta/sync", request.url), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email }),
+            });
+            const syncData = await syncRes.json();
+            if (syncData.synced) {
+              memberStatus = syncData.status;
+            }
+          } catch {
+            // Ignore sync errors, return current status
+          }
+        }
       }
 
       // Also check subscriptions table

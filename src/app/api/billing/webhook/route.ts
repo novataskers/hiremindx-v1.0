@@ -270,16 +270,21 @@ async function syncStripeSubscription({
 export async function POST(request: NextRequest): Promise<NextResponse> {
   let event: Stripe.Event;
 
+  console.log("[stripe-webhook] Webhook POST received");
+
   try {
     const stripe = getStripeClient();
     const signature = request.headers.get("stripe-signature");
+    console.log("[stripe-webhook] Signature present:", !!signature);
     if (!signature) return jsonError("Missing Stripe signature.", 400);
 
     const secret = getWebhookSecret();
     const payload = await request.text();
     event = stripe.webhooks.constructEvent(payload, signature, secret);
+    console.log("[stripe-webhook] Event constructed, type:", event.type);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Invalid webhook payload.";
+    console.error("[stripe-webhook] Event construction failed:", message);
     return jsonError(message, 400);
   }
 
@@ -289,6 +294,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
+        console.log("[stripe-webhook] checkout.session.completed, mode:", session.mode, "metadata:", session.metadata);
 
         if (session.mode !== "subscription") break;
 
@@ -298,9 +304,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         // ── Beta signup checkout ──
         if (session.metadata?.betaSignup === "true" && session.metadata?.betaEmail) {
+          console.log("[stripe-webhook] Beta signup detected, email:", session.metadata.betaEmail);
           const betaEmail = session.metadata.betaEmail.trim().toLowerCase();
           const stripeSubscription = subscriptionId ? await stripe.subscriptions.retrieve(subscriptionId) : null;
           const betaStatus = stripeSubscription?.status === "trialing" ? "trialing" : stripeSubscription?.status === "active" ? "active" : "active";
+          console.log("[stripe-webhook] Stripe subscription status:", stripeSubscription?.status, "=> betaStatus:", betaStatus);
 
           // Fetch current beta signup to check existing referral code & email status
           const betaRows = await db
@@ -316,18 +324,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             .where(eq(betaSignups.email, betaEmail))
             .limit(1);
 
+          console.log("[stripe-webhook] Beta row found:", !!betaRows[0], "current status:", betaRows[0]?.status);
+
           const betaRow = betaRows[0];
           let referralCode = betaRow?.referralCode ?? null;
 
           // Generate referral code if not already set
           if (!referralCode) {
             referralCode = randomUUID().replace(/-/g, "").slice(0, 12);
+            console.log("[stripe-webhook] Generating referral code:", referralCode);
             await db
               .update(betaSignups)
               .set({ referralCode })
               .where(eq(betaSignups.email, betaEmail));
           }
 
+          console.log("[stripe-webhook] Updating beta_signups status to:", betaStatus, "subscriptionId:", subscriptionId);
           await db
             .update(betaSignups)
             .set({
@@ -336,6 +348,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               status: betaStatus,
             })
             .where(eq(betaSignups.email, betaEmail));
+          console.log("[stripe-webhook] beta_signups updated successfully");
 
           // Try to link to existing user account
           const { linkBetaSignup } = await import("@/lib/beta-link");
@@ -345,6 +358,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             .where(eq(user.email, betaEmail))
             .limit(1);
 
+          console.log("[stripe-webhook] User account found:", !!userRows[0]);
           if (userRows[0]) {
             await linkBetaSignup(userRows[0].id, betaEmail);
           }
@@ -397,6 +411,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           console.log(`[stripe-webhook] Beta checkout completed for ${betaEmail}`);
           break;
         }
+        console.log("[stripe-webhook] Not a beta signup checkout");
 
         // ── Regular checkout ──
         const userId = await findUserIdFromStripeIdentifiers({

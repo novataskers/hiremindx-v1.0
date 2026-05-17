@@ -78,6 +78,8 @@ export default function BetaSignupModal({
       }
 
       if (data.url) {
+        // Store email for post-checkout sync
+        localStorage.setItem("betaSignupEmail", trimmedEmail);
         // Redirect to Stripe Checkout
         window.location.assign(data.url);
       } else {

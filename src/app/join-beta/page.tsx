@@ -167,7 +167,32 @@ function JoinBetaContent() {
           ? `You are member #${order}. Your 14-day free Elite trial has started.`
           : "Your 14-day free Elite trial has started.",
       });
-      fetchStatus();
+      // Proactively sync beta signup status with Stripe
+      const signupEmail = localStorage.getItem("betaSignupEmail");
+      if (signupEmail) {
+        fetch("/api/beta/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: signupEmail }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            console.log("[join-beta] Sync result:", data);
+            if (data.synced) {
+              toast.success("Account activated!", {
+                description: `You're now a Founding Member (#${data.signupOrder}).`,
+              });
+            }
+            localStorage.removeItem("betaSignupEmail");
+            fetchStatus();
+          })
+          .catch(() => {
+            localStorage.removeItem("betaSignupEmail");
+            fetchStatus();
+          });
+      } else {
+        fetchStatus();
+      }
       // If already signed in, trigger subscription linking
       if (session?.user) {
         fetch("/api/billing/subscription").catch(() => {});
