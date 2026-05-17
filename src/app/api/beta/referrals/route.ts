@@ -102,7 +102,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({
       referralCode,
-      referralUrl: referralCode ? `${siteUrl.replace(/\/$/, "")}/join-beta?ref=${referralCode}` : null,
+      referralUrl: referralCode ? `${siteUrl.replace(/\/$/, "")}/premium?ref=${referralCode}` : null,
       founderNumber: beta?.signupOrder ?? null,
       founderStatus: beta?.status ?? null,
       stats: {

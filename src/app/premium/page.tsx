@@ -205,6 +205,13 @@ function PremiumPageContent() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [checkoutModalPlanId, setCheckoutModalPlanId] = useState<string | null>(null);
   const [isActivating, setIsActivating] = useState(false);
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+
+  // Read referral code from URL
+  useEffect(() => {
+    const ref = searchParams.get("ref");
+    if (ref) setReferralCode(ref);
+  }, [searchParams]);
 
   // Load subscription data
   const loadSubscription = useCallback(async () => {
@@ -385,7 +392,7 @@ function PremiumPageContent() {
       const response = await fetch("/api/billing/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planId }),
+        body: JSON.stringify({ planId, ...(referralCode ? { referralCode } : {}) }),
       });
 
       const data = (await readJsonResponse<{ url?: string; error?: string }>(response)) ?? {};
