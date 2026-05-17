@@ -84,7 +84,7 @@ export const auth = betterAuth({
 						const { eq } = await import("drizzle-orm");
 						const { betaSignups } = await import("@/db/schema");
 						const { db } = await import("@/db");
-						const { sendHireMindXEmailNotification } = await import("@/lib/email");
+						const { sendBetaWelcomeEmail } = await import("@/lib/email");
 						const { randomUUID } = await import("crypto");
 						const betaEmail = user.email.trim().toLowerCase();
 						const betaRows = await db
@@ -101,13 +101,13 @@ export const auth = betterAuth({
 							}
 							const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || "https://www.hiremindx.com";
 							console.log(`[auth-hook] Sending delayed welcome email to: ${betaEmail}, founder #${betaRow.signupOrder}`);
-							const emailResult = await sendHireMindXEmailNotification({
+							const emailResult = await sendBetaWelcomeEmail({
 								to: betaEmail,
-								subject: `Welcome to HireMindX — You're Founding Member #${betaRow.signupOrder}!`,
+								subject: `You're In! Welcome to HireMindX Founding Beta`,
 								title: "You're One of the First 100",
-								summary: `Congratulations ${betaRow.name}, you've secured your place as Founding Member #${betaRow.signupOrder} of HireMindX. Your 14-day free Elite trial has started, and you're locked in at £9.99/month (50% off) for life.`,
-								previewText: `Welcome to HireMindX — You're Founding Member #${betaRow.signupOrder}!`,
-								ctaLabel: "Start Using HireMindX",
+								summary: `Congratulations ${betaRow.name}, you've been selected as Founding Member #${betaRow.signupOrder} of HireMindX! As one of only 100 founding beta members, you've secured exclusive lifetime benefits: 50% discount (£9.99/month vs £19.99), 14-day free trial of Elite features, and priority access to new features.`,
+								previewText: `You're in! Welcome to HireMindX Founding Beta as Founding Member #${betaRow.signupOrder}`,
+								ctaLabel: "Start Your Elite Trial",
 								ctaUrl: "/assist",
 								recipientName: betaRow.name,
 								metadata: [

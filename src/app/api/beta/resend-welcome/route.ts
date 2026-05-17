@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { betaSignups } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { sendHireMindXEmailNotification } from "@/lib/email";
+import { sendBetaWelcomeEmail } from "@/lib/email";
 import { randomUUID } from "crypto";
 
 export const runtime = "nodejs";
@@ -44,13 +44,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     console.log(`[resend-welcome] Sending welcome email to: ${betaEmail}, founder #${betaRow.signupOrder}`);
 
-    const emailResult = await sendHireMindXEmailNotification({
+    const emailResult = await sendBetaWelcomeEmail({
       to: betaEmail,
-      subject: `Welcome to HireMindX — You're Founding Member #${betaRow.signupOrder}!`,
+      subject: `You're In! Welcome to HireMindX Founding Beta`,
       title: "You're One of the First 100",
-      summary: `Congratulations ${betaRow.name}, you've secured your place as Founding Member #${betaRow.signupOrder} of HireMindX. Your 14-day free Elite trial has started, and you're locked in at £9.99/month (50% off) for life.`,
-      previewText: `Welcome to HireMindX — You're Founding Member #${betaRow.signupOrder}!`,
-      ctaLabel: "Start Using HireMindX",
+      summary: `Congratulations ${betaRow.name}, you've been selected as Founding Member #${betaRow.signupOrder} of HireMindX! As one of only 100 founding beta members, you've secured exclusive lifetime benefits: 50% discount (£9.99/month vs £19.99), 14-day free trial of Elite features, and priority access to new features.`,
+      previewText: `You're in! Welcome to HireMindX Founding Beta as Founding Member #${betaRow.signupOrder}`,
+      ctaLabel: "Start Your Elite Trial",
       ctaUrl: "/assist",
       recipientName: betaRow.name,
       metadata: [

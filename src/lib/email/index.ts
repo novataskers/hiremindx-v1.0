@@ -90,6 +90,12 @@ const NOTIFICATION_ICON_SVG = `<svg width="24" height="24" viewBox="0 0 24 24" f
   <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="${NOTIFICATION_ACCENT}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 </svg>`;
 
+// Beta-specific welcome email constants
+const BETA_ACCENT = "#FFD700";
+const BETA_ICON_SVG = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;">
+  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" stroke="${BETA_ACCENT}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="${BETA_ACCENT}20"/>
+</svg>`;
+
 function getSiteUrl(): string {
   let url =
     process.env.NEXT_PUBLIC_SITE_URL ||
@@ -140,6 +146,220 @@ const DEFAULT_SUBJECT = "You've got a notification from HireMindX";
 const DEFAULT_TITLE = "New Notification";
 const DEFAULT_SUMMARY = "You have a new notification from HireMindX Community. Click below to check it out.";
 const DEFAULT_CTA_LABEL = "Check notifications";
+
+export function renderBetaWelcomeEmailTemplate(
+  params: HireMindXEmailNotificationParams,
+): HireMindXRenderedEmailTemplate {
+  const config = getSmtpConfig();
+  const accent = BETA_ACCENT;
+  const ctaUrl = resolveUrl(params.ctaUrl || "/assist", config.siteUrl) || `${config.siteUrl}/assist`;
+  const subject = params.subject || "Welcome to HireMindX Founding Beta!";
+  const title = params.title || "You're One of the First 100";
+  const summary = params.summary || "Congratulations! You've been selected as a founding member of HireMindX.";
+  const ctaLabel = params.ctaLabel || "Start Your Elite Trial";
+  const previewText = params.previewText || summary;
+  const safeTitle = escapeHtml(title);
+  const safeSummary = escapeHtml(summary);
+  const safeRecipientName = params.recipientName ? escapeHtml(params.recipientName) : "there";
+
+  const siteUrl = config.siteUrl;
+
+  const metadataHtml = params.metadata?.length
+    ? params.metadata
+        .map(
+          (item, index) => `
+            <tr>
+              <td style="padding: 14px 20px; color: #888888; font-size: 13px; font-weight: 500; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; letter-spacing: 0.3px; text-transform: uppercase; border-bottom: ${
+                index !== params.metadata!.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none"
+              };">${escapeHtml(item.label)}</td>
+              <td align="right" style="padding: 14px 20px; color: #E8E8E8; font-size: 14px; font-weight: 600; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; border-bottom: ${
+                index !== params.metadata!.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none"
+              };">${escapeHtml(item.value)}</td>
+            </tr>`,
+        )
+        .join("")
+    : "";
+
+  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(subject)}</title>
+  <style type="text/css">
+    body { margin: 0; padding: 0; background-color: #0A0A0A; -webkit-font-smoothing: antialiased; }
+    img { border: 0; display: block; outline: none; text-decoration: none; }
+    p { margin: 0 0 16px 0; }
+    a { color: ${accent}; text-decoration: none; }
+    a:hover { text-decoration: underline !important; }
+    .email-container { width: 100%; max-width: 560px; margin: 0 auto; }
+    .beta-badge { background: linear-gradient(135deg, ${accent} 0%, #FFA500 100%); color: #000; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block; margin-bottom: 16px; }
+    @media only screen and (max-width: 600px) {
+      .email-container { width: 100% !important; }
+      .content-card { padding: 36px 24px !important; }
+      .header-pad { padding: 48px 20px 36px !important; }
+    }
+  </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #0A0A0A; color: #E0E0E0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <!-- Preheader text -->
+  <div style="display: none; font-size: 1px; color: #0A0A0A; line-height: 1px; max-height: 0; max-width: 0; opacity: 0; overflow: hidden;">
+    ${escapeHtml(previewText)}
+  </div>
+
+  <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #0A0A0A;">
+    <tr>
+      <td align="center" style="padding: 0 0 64px 0;">
+        <table border="0" cellpadding="0" cellspacing="0" class="email-container" style="max-width: 560px; width: 560px; margin: 0 auto;">
+
+          <!-- Header (Logo) -->
+          <tr>
+            <td align="center" class="header-pad" style="padding: 56px 0 40px 0;">
+              <a href="${escapeHtml(siteUrl)}" style="display: inline-block; text-decoration: none;">
+                <table border="0" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="padding: 8px 0;">
+                      <table border="0" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td style="padding-right: 10px; vertical-align: middle;">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;">
+                              <polygon points="12 2 2 7 12 12 22 7" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                              <path d="M2 17l10 5 10-5" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                              <path d="M2 12l10 5 10-5" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                            </svg>
+                          </td>
+                          <td style="vertical-align: middle;">
+                            <span style="font-size: 14px; font-weight: 700; color: #FFFFFF; letter-spacing: 0.22em; text-transform: uppercase; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">HireMindX</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </a>
+              <p style="margin: 16px 0 0 0; font-size: 10px; letter-spacing: 0.35em; text-transform: uppercase; color: #555555; font-weight: 600;">Autonomous Intelligence</p>
+            </td>
+          </tr>
+
+          <!-- Main Card -->
+          <tr>
+            <td align="center" style="padding: 0 12px;">
+              <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121212; border: 1px solid rgba(255,255,255,0.06); border-radius: 16px; overflow: hidden;">
+                <!-- Decorative top border -->
+                <tr>
+                  <td style="background: linear-gradient(90deg, ${accent}80 0%, ${accent} 50%, ${accent}80 100%); height: 3px; font-size: 0; line-height: 0;">&nbsp;</td>
+                </tr>
+
+                <tr>
+                  <td class="content-card" style="padding: 40px 36px;">
+
+                    <!-- Beta Badge -->
+                    <div style="text-align: center; margin-bottom: 24px;">
+                      <span class="beta-badge">Founding Member</span>
+                    </div>
+
+                    <!-- Icon Badge -->
+                    <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 0 24px 0;">
+                      <tr>
+                        <td style="background-color: ${accent}18; border: 1px solid ${accent}30; border-radius: 12px; padding: 12px;">
+                          ${BETA_ICON_SVG}
+                        </td>
+                      </tr>
+                    </table>
+
+                    <h1 style="margin: 0 0 20px 0; font-size: 26px; line-height: 1.2; font-weight: 700; color: #FFFFFF; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; letter-spacing: -0.01em;">
+                      ${safeTitle}
+                    </h1>
+
+                    <p style="margin: 0 0 20px 0; font-size: 15px; line-height: 1.5; color: #888888; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">
+                      Hello ${safeRecipientName},
+                    </p>
+
+                    <p style="margin: 0 0 32px 0; font-size: 16px; line-height: 1.7; color: #CCCCCC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">
+                      ${safeSummary}
+                    </p>
+
+                    ${
+                      metadataHtml
+                        ? `<table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 32px 0; background-color: #1A1A1A; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px;">
+                      ${metadataHtml}
+                    </table>`
+                        : ""
+                    }
+
+                    <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                      <tr>
+                        <td align="left" style="padding-top: 8px;">
+                          <table border="0" cellpadding="0" cellspacing="0">
+                            <tr>
+                              <td align="center" bgcolor="${accent}" style="border-radius: 10px;">
+                                <a href="${escapeHtml(ctaUrl)}" target="_blank" style="display: inline-block; padding: 15px 32px; color: #000000; font-size: 15px; font-weight: 700; text-decoration: none; border-radius: 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; letter-spacing: 0.3px;">
+                                  ${escapeHtml(ctaLabel)}
+                                </a>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="padding: 40px 20px 0 20px;">
+              <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 28px;">
+                <tr>
+                  <td align="center">
+                    <p style="margin: 0 0 8px 0; font-size: 13px; color: #555555; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">
+                      <strong style="color: #777777; font-weight: 600;">HireMindX</strong> &mdash; Autonomous Intelligence for Professionals
+                    </p>
+                    <p style="margin: 0; font-size: 11px; line-height: 1.7; color: #444444; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">
+                      &copy; ${new Date().getFullYear()} Atlas Infrastructure Group. Founding Beta welcome.<br/>
+                      <a href="${escapeHtml(siteUrl)}" style="color: ${accent}; text-decoration: none;">Visit HireMindX</a> <span style="color: #333333;">&middot;</span> <a href="mailto:${escapeHtml(config.fromEmail)}" style="color: #555555; text-decoration: underline;">Support</a>
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = [
+    "HireMindX - Founding Beta",
+    "",
+    `Hello ${params.recipientName || "there"},`,
+    "",
+    "YOU'RE ONE OF THE FIRST 100 FOUNDING MEMBERS!",
+    "",
+    summary,
+    "",
+    ...(params.metadata?.length ? params.metadata.map((item) => `${item.label}: ${item.value}`) : []),
+    "",
+    `${ctaLabel}: ${ctaUrl}`,
+    "",
+    "This exclusive founding beta invitation was sent by HireMindX.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    html,
+    text,
+    subject,
+    previewText,
+  };
+}
 
 export function renderHireMindXEmailTemplate(
   params: HireMindXEmailNotificationParams,
@@ -346,6 +566,74 @@ export function renderHireMindXEmailTemplate(
     subject,
     previewText,
   };
+}
+
+export async function sendBetaWelcomeEmail(
+  params: HireMindXEmailNotificationParams,
+): Promise<HireMindXEmailSendResult> {
+  const config = getSmtpConfig();
+  const missingVars: string[] = [];
+  if (!config.host) missingVars.push("NOTIFICATION_SMTP_HOST / HOSTINGER_SMTP_HOST");
+  if (!config.user) missingVars.push("NOTIFICATION_SMTP_USER / HOSTINGER_SMTP_USER");
+  if (!config.pass) missingVars.push("NOTIFICATION_SMTP_PASS / HOSTINGER_SMTP_PASSWORD");
+
+  console.log(`[Beta welcome email] Attempting to send email to: ${params.to}, subject: "${params.subject || "(no subject)"}", smtpConfigured: ${missingVars.length === 0}`);
+
+  if (missingVars.length > 0) {
+    console.warn(`[Beta welcome email] SMTP is not fully configured. Missing env vars: ${missingVars.join(", ")}. Skipping email send.`, {
+      to: params.to,
+      subject: params.subject,
+    });
+
+    return {
+      success: false,
+      skipped: true,
+      error: `SMTP is not fully configured. Missing: ${missingVars.join(", ")}`,
+    };
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      auth: {
+        user: config.user,
+        pass: config.pass,
+      },
+    });
+
+    const rendered = renderBetaWelcomeEmailTemplate(params);
+    console.log(`[Beta welcome email] Rendered template. Sending via ${config.host}:${config.port} (secure=${config.secure})`);
+
+    const info = await transporter.sendMail({
+      from: `${config.fromName} <${config.fromEmail}>`,
+      replyTo: config.replyTo,
+      to: params.to,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+    });
+
+    console.log(`[Beta welcome email] Email sent successfully. messageId=${info.messageId}`);
+
+    return {
+      success: true,
+      messageId: info.messageId,
+    };
+  } catch (error) {
+    console.error("[Beta welcome email] Failed to send welcome email", {
+      error: error instanceof Error ? error.message : error,
+      to: params.to,
+      subject: params.subject,
+      smtpHost: config.host,
+    });
+
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown email send error",
+    };
+  }
 }
 
 export async function sendHireMindXEmailNotification(
