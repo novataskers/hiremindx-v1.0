@@ -68,6 +68,38 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // Proactively fetch missing period dates from Stripe (e.g. linkBetaSignup created row without dates)
+  if (subscription && subscription.stripeSubscriptionId && (!subscription.currentPeriodStart || !subscription.currentPeriodEnd)) {
+    try {
+      const { getStripeClient } = await import("@/lib/stripe");
+      const stripe = getStripeClient();
+      const stripeSub = await stripe.subscriptions.retrieve(subscription.stripeSubscriptionId);
+      const item = stripeSub.items?.data?.[0];
+      const periodStart = (item as any)?.current_period_start ?? (stripeSub as any).current_period_start;
+      const periodEnd = (item as any)?.current_period_end ?? (stripeSub as any).current_period_end;
+      if (typeof periodStart === "number" || typeof periodEnd === "number") {
+        await db
+          .update(subscriptions)
+          .set({
+            currentPeriodStart: typeof periodStart === "number" ? new Date(periodStart * 1000) : subscription.currentPeriodStart,
+            currentPeriodEnd: typeof periodEnd === "number" ? new Date(periodEnd * 1000) : subscription.currentPeriodEnd,
+            updatedAt: new Date(),
+          })
+          .where(eq(subscriptions.userId, session.user.id));
+        console.log("[subscription-api] Updated missing period dates from Stripe");
+        // Re-fetch updated row
+        const updatedRows = await db
+          .select()
+          .from(subscriptions)
+          .where(eq(subscriptions.userId, session.user.id))
+          .limit(1);
+        subscription = updatedRows[0] ?? null;
+      }
+    } catch (e) {
+      console.error("[subscription-api] Failed to fetch missing Stripe dates:", e);
+    }
+  }
+
   const plan = subscription ? getBillingPlan(subscription.planId) : null;
 
   // Derive founder metadata for frontend

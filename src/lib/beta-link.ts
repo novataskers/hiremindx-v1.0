@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { betaSignups, subscriptions } from "@/db/schema";
+import { getStripeClient } from "@/lib/stripe";
 
 /**
  * Links a beta signup to a user account by email.
@@ -40,7 +41,26 @@ export async function linkBetaSignup(userId: string, email: string): Promise<boo
     .limit(1);
 
   if (!subRows[0]) {
-    // 4. Create subscription record for beta_elite
+    // 4. Try to fetch period dates from Stripe if subscription ID exists
+    let currentPeriodStart: Date | null = null;
+    let currentPeriodEnd: Date | null = null;
+
+    if (beta.stripeSubscriptionId) {
+      try {
+        const stripe = getStripeClient();
+        const stripeSub = await stripe.subscriptions.retrieve(beta.stripeSubscriptionId);
+        const item = stripeSub.items?.data?.[0];
+        const periodStart = (item as any)?.current_period_start ?? (stripeSub as any).current_period_start;
+        const periodEnd = (item as any)?.current_period_end ?? (stripeSub as any).current_period_end;
+        if (typeof periodStart === "number") currentPeriodStart = new Date(periodStart * 1000);
+        if (typeof periodEnd === "number") currentPeriodEnd = new Date(periodEnd * 1000);
+        console.log("[beta-link] Fetched Stripe dates:", { currentPeriodStart, currentPeriodEnd });
+      } catch (e) {
+        console.error("[beta-link] Failed to fetch Stripe subscription dates:", e);
+      }
+    }
+
+    // 5. Create subscription record for beta_elite
     await db.insert(subscriptions).values({
       userId,
       planId: "beta_elite",
@@ -49,6 +69,8 @@ export async function linkBetaSignup(userId: string, email: string): Promise<boo
       stripeCustomerId: beta.stripeCustomerId ?? undefined,
       stripeSubscriptionId: beta.stripeSubscriptionId ?? undefined,
       stripeCheckoutSessionId: beta.stripeCheckoutSessionId ?? undefined,
+      currentPeriodStart: currentPeriodStart ?? undefined,
+      currentPeriodEnd: currentPeriodEnd ?? undefined,
       metadata: { betaSignup: true, planId: "beta_elite" },
     });
     console.log("[beta-link] Created beta_elite subscription for user:", userId);
