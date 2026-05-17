@@ -14,6 +14,7 @@ type BetaStatus = {
   remaining: number;
   isFull: boolean;
   isMember: boolean;
+  hasPending: boolean;
   memberOrder: number | null;
   memberStatus: string | null;
 };
@@ -213,6 +214,7 @@ function JoinBetaContent() {
   const taken = betaStatus?.taken ?? 0;
   const progressPercent = Math.min(100, (taken / 100) * 100);
   const isMember = betaStatus?.isMember ?? false;
+  const hasPending = betaStatus?.hasPending ?? false;
 
   const features = [
     { icon: Zap, text: "Full Elite access — every feature, unlimited" },
@@ -562,6 +564,30 @@ function JoinBetaContent() {
                 Go to Dashboard
               </button>
             </div>
+          ) : hasPending ? (
+            /* ── Pending: payment incomplete ── */
+            <div className="w-full rounded-2xl border border-orange-500/20 bg-orange-500/[0.04] p-6 text-center">
+              <div className="flex items-center justify-center gap-2 mb-3">
+                <Shield className="w-5 h-5 text-orange-400" />
+                <span className="text-sm font-bold text-orange-400 tracking-wide">
+                  Payment Not Completed
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400 mb-4">
+                Your checkout was started but not finished. Complete payment to secure your spot as a Founding Member.
+              </p>
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="w-full h-11 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
+                style={{
+                  background: "linear-gradient(135deg, #c8960c, #f5d060)",
+                  color: "#000",
+                }}
+              >
+                <ChevronRight className="w-4 h-4" />
+                Complete Payment
+              </button>
+            </div>
           ) : postCheckout ? (
             /* ── Post-checkout: prompt to sign in ── */
             <div className="w-full rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-6 text-center">
@@ -723,6 +749,18 @@ function JoinBetaContent() {
               >
                 <Check className="w-4 h-4" />
                 You have this plan
+              </button>
+            ) : hasPending ? (
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="w-full h-10 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
+                style={{
+                  background: "linear-gradient(135deg, #c8960c, #f5d060)",
+                  color: "#000",
+                }}
+              >
+                <ChevronRight className="w-4 h-4" />
+                Complete Payment
               </button>
             ) : (
               <button

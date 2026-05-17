@@ -41,13 +41,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Check if email already signed up
     const existing = await db
-      .select({ id: betaSignups.id })
+      .select({ id: betaSignups.id, status: betaSignups.status })
       .from(betaSignups)
       .where(eq(betaSignups.email, email))
       .limit(1);
 
     if (existing.length > 0) {
-      return jsonError("This email is already registered for beta access.", 409);
+      // Allow retry if previous signup was abandoned (pending)
+      if (existing[0].status === "pending") {
+        await db.delete(betaSignups).where(eq(betaSignups.email, email));
+        console.log("[beta-signup] Deleted abandoned pending signup for:", email);
+      } else {
+        return jsonError("This email is already registered for beta access.", 409);
+      }
     }
 
     // ── Referral code validation ──

@@ -23,6 +23,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     // Check if current user is already a beta member
     let isMember = false;
+    let hasPending = false;
     let memberOrder: number | null = null;
     let memberStatus: string | null = null;
 
@@ -37,12 +38,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         .limit(1);
 
       if (betaRows[0]) {
-        isMember = true;
         memberOrder = betaRows[0].signupOrder;
         memberStatus = betaRows[0].status;
 
-        // Proactive sync: if pending, trigger background sync with Stripe
+        // Only count active/trialing as actual members
+        if (betaRows[0].status === "active" || betaRows[0].status === "trialing") {
+          isMember = true;
+        }
+
+        // Track pending state separately so frontend can show "complete payment" UI
         if (betaRows[0].status === "pending") {
+          hasPending = true;
+
+          // Proactive sync: try to activate with Stripe in background
           try {
             const syncRes = await fetch(new URL("/api/beta/sync", request.url), {
               method: "POST",
@@ -52,6 +60,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             const syncData = await syncRes.json();
             if (syncData.synced) {
               memberStatus = syncData.status;
+              isMember = true;
+              hasPending = false;
             }
           } catch {
             // Ignore sync errors, return current status
@@ -59,8 +69,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }
       }
 
-      // Also check subscriptions table
-      if (!isMember) {
+      // Also check subscriptions table as fallback
+      if (!isMember && !hasPending) {
         const subRows = await db
           .select({ planId: subscriptions.planId, status: subscriptions.status })
           .from(subscriptions)
@@ -80,6 +90,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       remaining,
       isFull: remaining === 0,
       isMember,
+      hasPending,
       memberOrder,
       memberStatus,
     });
