@@ -392,10 +392,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               });
               console.log(`[stripe-webhook] Welcome email result: success=${emailResult.success}, skipped=${emailResult.skipped}, messageId=${emailResult.messageId}, error=${emailResult.error}`);
 
-              await db
-                .update(betaSignups)
-                .set({ welcomeEmailSent: true })
-                .where(eq(betaSignups.email, betaEmail));
+              if (emailResult.success) {
+                await db
+                  .update(betaSignups)
+                  .set({ welcomeEmailSent: true })
+                  .where(eq(betaSignups.email, betaEmail));
+                console.log("[stripe-webhook] welcomeEmailSent set to true");
+              } else {
+                console.warn("[stripe-webhook] Email did not send successfully, keeping welcomeEmailSent=false for retry");
+              }
             } catch (emailError) {
               console.error("[stripe-webhook] Welcome email failed:", emailError);
             }

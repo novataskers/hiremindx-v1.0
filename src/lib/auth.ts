@@ -120,7 +120,12 @@ export const auth = betterAuth({
 								],
 							});
 							console.log(`[auth-hook] Welcome email result: success=${emailResult.success}, skipped=${emailResult.skipped}, messageId=${emailResult.messageId}, error=${emailResult.error}`);
-							await db.update(betaSignups).set({ welcomeEmailSent: true }).where(eq(betaSignups.email, betaEmail));
+							if (emailResult.success) {
+								await db.update(betaSignups).set({ welcomeEmailSent: true }).where(eq(betaSignups.email, betaEmail));
+								console.log("[auth-hook] welcomeEmailSent set to true");
+							} else {
+								console.warn("[auth-hook] Email did not send successfully, keeping welcomeEmailSent=false for retry");
+							}
 						}
 					} catch (emailError) {
 						console.error("[auth-hook] Delayed welcome email failed:", emailError);
