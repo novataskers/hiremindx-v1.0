@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { betaSignups, user } from "@/db/schema";
 import { getStripeClient } from "@/lib/stripe";
 import { auth } from "@/lib/auth";
+import { sendBetaWelcomeEmail } from "@/lib/email";
 import { randomUUID } from "crypto";
 
 export const runtime = "nodejs";
@@ -116,6 +117,39 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (userRows[0]) {
       await linkBetaSignup(userRows[0].id, email);
       console.log("[beta-sync] Linked to user:", userRows[0].id);
+    }
+
+    // Send welcome email if not already sent and status is verified
+    if (!beta.welcomeEmailSent && beta.name && (betaStatus === "trialing" || betaStatus === "active")) {
+      try {
+        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || "https://www.hiremindx.com";
+        console.log(`[beta-sync] Sending welcome email to: ${email}, founder #${beta.signupOrder}`);
+        const emailResult = await sendBetaWelcomeEmail({
+          to: email,
+          subject: `You're In! Welcome to HireMindX Founding Beta`,
+          title: "You're One of the First 100",
+          summary: `Congratulations ${beta.name}, you've been selected as Founding Member #${beta.signupOrder} of HireMindX! As one of only 100 founding beta members, you've secured exclusive lifetime benefits: 50% discount (£9.99/month vs £19.99), 14-day free trial of Elite features, and priority access to new features.`,
+          previewText: `You're in! Welcome to HireMindX Founding Beta as Founding Member #${beta.signupOrder}`,
+          ctaLabel: "Start Your Elite Trial",
+          ctaUrl: "/assist",
+          recipientName: beta.name,
+          metadata: [
+            { label: "Founder Number", value: `#${beta.signupOrder}` },
+            { label: "Plan", value: "Elite (Founding Member)" },
+            { label: "Price", value: "£9.99/month (50% off for life)" },
+            { label: "Free Trial", value: "14 days" },
+            { label: "Referral Link", value: `${siteUrl.replace(/\/$/, "")}/premium?ref=${referralCode}` },
+            { label: "Referral Rewards", value: "Refer 1 = 1 free month | 5 = 3 more | 10 = 6 more + Badge + VIP Access" },
+          ],
+        });
+        console.log(`[beta-sync] Welcome email result: success=${emailResult.success}, messageId=${emailResult.messageId}, error=${emailResult.error}`);
+        if (emailResult.success) {
+          await db.update(betaSignups).set({ welcomeEmailSent: true }).where(eq(betaSignups.email, email));
+          console.log("[beta-sync] welcomeEmailSent set to true");
+        }
+      } catch (emailError) {
+        console.error("[beta-sync] Welcome email failed:", emailError);
+      }
     }
 
     return NextResponse.json({
