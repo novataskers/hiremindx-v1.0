@@ -1505,11 +1505,8 @@ export async function processMessage(
   
   let aiResponse = "";
   try {
-    // Use Large for complex reasoning (searches, drafts, lookups), Small for simple replies
-    const needsLargeModel = userMessage.length > 100 ||
-      /\b(search|find|send|email|draft|compose|companies|outreach|lookup|linkedin|decision.?makers?|contact|resume|cv)\b/i.test(userMessage);
     const response = await mistral.chat.complete({
-        model: needsLargeModel ? "mistral-large-latest" : "mistral-small-latest",
+        model: "mistral-large-latest",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage },
