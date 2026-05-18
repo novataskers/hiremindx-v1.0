@@ -333,6 +333,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               referralCode: betaSignups.referralCode,
               welcomeEmailSent: betaSignups.welcomeEmailSent,
               userId: betaSignups.userId,
+              status: betaSignups.status,
             })
             .from(betaSignups)
             .where(eq(betaSignups.email, betaEmail))
@@ -924,7 +925,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         break;
     }
   } catch (error) {
-    console.error("[stripe-webhook] processing failed:", error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : undefined;
+    console.error(`[stripe-webhook] processing failed for event ${event?.type ?? 'unknown'}:`, errMsg);
+    if (errStack) console.error("[stripe-webhook] stack:", errStack);
     return jsonError("Webhook processing failed.", 500);
   }
 
