@@ -170,12 +170,41 @@ const PREDICTION_PATTERNS = [
   /\b(will|would)\s+(ai|machine learning|crypto|bitcoin|tech|jobs?)\b.{0,20}\b(grow|decline|change|evolve|dominate)/i,
   /\boutlook\s+(for|on)\b/i,
   /\bprojection\s+(for|on|about)\b/i,
+  // Bare predict/forecast with any object
+  /\b(predict|forecast)\s+(this|that|it)\b/i,
+  // Probability / chances / odds
+  /\b(chances?|probability|odds)\s+(of|that|this|are)/i,
+  /\bhow\s+likely\b/i,
+  /\bwhat('s|\s+is)\s+the\s+(probability|likelihood|chance)\b/i,
+  // Outcome / performance phrasing
+  /\bhow\s+will\b.{0,30}\b(be|look|perform|turn\s+out|end\s+up|play\s+out|do|fare|develop|progress)/i,
+  /\bwhat\s+will\b.{0,30}\b(look\s+like|be\s+like|happen|result|become)/i,
+  // "What's going to happen" / "What's likely to happen"
+  /\bwhat('s|\s+is)\s+(going\s+to|gonna)\s+happen/i,
+  /\bwhat('s|\s+is)\s+likely\s+to\b/i,
+  // Temporal predictions: "in the next X hours/days"
+  /\bin\s+the\s+next\s+\w*\s*(hour|day|week|month|year|quarter)/i,
+  // "What will happen to/with/if/when/next"
+  /\bwhat\s+(will|would|might|could)\s+happen\s+(to|with|if|when|next)\b/i,
+  // "Will X go up/down/improve"
+  /\bwill\b.{0,20}\b(go\s+up|go\s+down|improve|worsen|succeed|fail|recover|collapse)/i,
+  // Conversational prediction requests
+  /\b(can|could)\s+you\s+(predict|forecast)\b/i,
+  /\b(give|show)\s+(me\s+)?(a\s+)?(prediction|forecast)/i,
+  /\bwhat\s+do\s+you\s+think\s+will\b/i,
+  // Estimate/anticipate phrasing
+  /\bestimate\b.{0,20}\b(outcome|result|future|likelihood|chance|impact)/i,
+  /\banticipate\b/i,
+  // Generic standalone prediction words (broad catch-all, placed last)
+  /\bpredict\b/i,
+  /\bforecast\b/i,
 ];
 
 function isPredictionIntent(text: string): boolean {
   const lower = text.toLowerCase();
-  // Exclude if it looks like deep research (e.g. "find me the document")
-  if (isDeepResearchIntent(text)) return false;
+  // If user used explicit prediction language, don't let Deep Research override
+  const hasExplicitPredictionWord = /\b(predict|forecast|prediction|probability|chances|odds|outlook|projection|anticipate)\b/i.test(lower);
+  if (!hasExplicitPredictionWord && isDeepResearchIntent(text)) return false;
   return PREDICTION_PATTERNS.some(p => p.test(lower));
 }
 
@@ -206,7 +235,26 @@ function isDeepResearchIntent(text: string): boolean {
     /\bwhat\s+(is|are|was|were)\s+the\s+(document|file|record|evidence|report)s?\b/i.test(lower) ||
     /\b(where|how)\s+(can|do)\s+(i|we)\s+find\b/i.test(lower) ||
     /\buncover\b.{0,20}\b(truth|facts?|evidence|data|details|secrets?)/i.test(lower) ||
-    /\b(expose|reveal|discover)\s+(the|any)?\s*(truth|facts?|evidence|corruption|fraud|scandal)/i.test(lower)
+    /\b(expose|reveal|discover)\s+(the|any)?\s*(truth|facts?|evidence|corruption|fraud|scandal)/i.test(lower) ||
+    // Comprehensive / detailed / extensive analysis requests
+    /\b(comprehensive|detailed|extensive|exhaustive|thorough|in-?depth)\s+(analysis|breakdown|review|examination|study|overview|exploration|report|research)\b/i.test(lower) ||
+    /\bdeep\s+(breakdown|analysis|exploration|examination|study)\b/i.test(lower) ||
+    // Multi-source / cross-reference research
+    /\b(multi-?source|cross-?reference|cross-?check)\s+(analysis|research|investigation|study)\b/i.test(lower) ||
+    // Advanced / intensive / rigorous research
+    /\b(advanced|intensive|rigorous)\s+(research|analysis|investigation|study|examination)\b/i.test(lower) ||
+    // Long-form / detailed reasoning
+    /\b(long-?form|detailed)\s+(reasoning|explanation|research|analysis|exploration)\b/i.test(lower) ||
+    // "Analyze in depth / deeply / thoroughly"
+    /\b(analyze|analyse)\s+(in\s+depth|deeply|thoroughly|extensively|comprehensively)\b/i.test(lower) ||
+    // "I need research/analysis on"
+    /\bi\s+need\s+(detailed\s+|comprehensive\s+|extensive\s+|thorough\s+)?(research|analysis|information|breakdown)\s+(on|about|for|regarding)\b/i.test(lower) ||
+    // "Give me everything on"
+    /\b(give|show|tell)\s+me\s+everything\s+(on|about|regarding)\b/i.test(lower) ||
+    // "Extensively / thoroughly / comprehensively research/analyze"
+    /\b(extensively|thoroughly|comprehensively)\s+(research|analyze|analyse|investigate|examine|study|explore)\b/i.test(lower) ||
+    // "Do a full/complete analysis"
+    /\b(do|perform|conduct|run)\s+(a\s+)?(full|complete|thorough|deep|comprehensive)\s+(analysis|research|investigation|study|review|breakdown)\b/i.test(lower)
   );
 }
 

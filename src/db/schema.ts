@@ -21,6 +21,12 @@ export const user = sqliteTable("user", {
   lastSeen: integer("last_seen"),
   marketingConsent: integer("marketing_consent", { mode: "boolean" }).notNull().default(false),
   marketingConsentAt: integer("marketing_consent_at", { mode: "timestamp" }),
+  // Beta/founding member fields
+  beta_status: text("beta_status"),
+  signup_order: integer("signup_order"),
+  referral_code: text("referral_code"),
+  welcome_email_sent: integer("welcome_email_sent", { mode: "boolean" }).default(false),
+  stripe_customer_id: text("stripe_customer_id"),
 });
 
 export const session = sqliteTable("session", {

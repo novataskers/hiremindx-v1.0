@@ -207,10 +207,19 @@ function PremiumPageContent() {
   const [isActivating, setIsActivating] = useState(false);
   const [referralCode, setReferralCode] = useState<string | null>(null);
 
-  // Read referral code from URL
+  // Read referral code from URL first, then cookie fallback.
+  // Persist to cookie so the code survives auth redirects.
   useEffect(() => {
     const ref = searchParams.get("ref");
-    if (ref) setReferralCode(ref);
+    if (ref) {
+      setReferralCode(ref);
+      document.cookie = `hmx_ref=${encodeURIComponent(ref)}; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`;
+    } else {
+      const match = document.cookie.match(/(?:^|;\s*)hmx_ref=([^;]*)/);
+      if (match?.[1]) {
+        setReferralCode(decodeURIComponent(match[1]));
+      }
+    }
   }, [searchParams]);
 
   // Load subscription data

@@ -77,6 +77,7 @@ function JoinBetaContent() {
   const [referralData, setReferralData] = useState<ReferralData | null>(null);
   const [referralExpired, setReferralExpired] = useState(false);
   const [isSignInModalOpen, setIsSignInModalOpen] = useState(false);
+  const [referralCode, setReferralCode] = useState<string | null>(null);
 
   // Auth gate: require sign-in before opening beta signup
   const handleJoinBetaClick = () => {
@@ -148,6 +149,21 @@ function JoinBetaContent() {
       fetchReferrals();
     }
   }, [betaStatus?.isMember, fetchReferrals]);
+
+  // Read referral code from URL first, then cookie fallback.
+  // Persist to cookie so the code survives auth redirects.
+  useEffect(() => {
+    const ref = searchParams.get("ref");
+    if (ref) {
+      setReferralCode(ref);
+      document.cookie = `hmx_ref=${encodeURIComponent(ref)}; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`;
+    } else {
+      const match = document.cookie.match(/(?:^|;\s*)hmx_ref=([^;]*)/);
+      if (match?.[1]) {
+        setReferralCode(decodeURIComponent(match[1]));
+      }
+    }
+  }, [searchParams]);
 
   // Check for expired referral link from URL
   useEffect(() => {
@@ -824,6 +840,7 @@ function JoinBetaContent() {
         onClose={() => setIsModalOpen(false)}
         prefillName={session?.user?.name ?? ""}
         prefillEmail={session?.user?.email ?? ""}
+        referralCode={referralCode ?? undefined}
       />
 
       {/* ── SIGN IN MODAL ── */}

@@ -548,6 +548,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           stripeCheckoutSessionId: (stripeSubscription.metadata as any)?.checkoutSessionId ?? null,
           checkoutPlanId: null,
         });
+
+        // Handle referral refunds — if a referred user's subscription is canceled/refunded,
+        // mark the referral as refunded so future rewards are not granted from this user
+        if (stripeSubscription.metadata?.referralCode && stripeSubscription.status === "canceled") {
+          const refundCustomerId = typeof stripeSubscription.customer === "string" ? stripeSubscription.customer : null;
+          if (refundCustomerId) {
+            const refundCustomer = await stripe.customers.retrieve(refundCustomerId);
+            const referredEmail = typeof refundCustomer === "object" ? refundCustomer.email ?? null : null;
+            if (referredEmail) {
+              const normalizedEmail = referredEmail.trim().toLowerCase();
+              const refCode = stripeSubscription.metadata.referralCode;
+              await db
+                .update(referrals)
+                .set({ status: "refunded", updatedAt: new Date().toISOString() })
+                .where(and(eq(referrals.referralCode, refCode), eq(referrals.referredEmail, normalizedEmail)));
+              console.log(`[stripe-webhook] Referral marked as refunded: ${refCode} → ${normalizedEmail}`);
+            }
+          }
+        }
         break;
       }
 
@@ -687,23 +706,69 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         const normalizedEmail = referredEmail.trim().toLowerCase();
 
-        // Update referral status to paid
+        // Look up existing referral row
         const refRows = await db
-          .select({ id: referrals.id, referrerId: referrals.referrerId })
+          .select({ id: referrals.id, referrerId: referrals.referrerId, status: referrals.status })
           .from(referrals)
           .where(and(eq(referrals.referralCode, referralCode), eq(referrals.referredEmail, normalizedEmail)))
           .limit(1);
 
-        if (!refRows[0]) break;
-        const ref = refRows[0];
+        let ref = refRows[0];
 
-        // Only process if transitioning to paid for first time
-        if (ref.referrerId) {
+        // Bug #4 fix: If no referral row exists yet (race condition — invoice.paid fired
+        // before checkout.session.completed), create the referral row now.
+        if (!ref) {
+          const referrerRows = await db
+            .select({ userId: betaSignups.userId, email: betaSignups.email })
+            .from(betaSignups)
+            .where(eq(betaSignups.referralCode, referralCode))
+            .limit(1);
+          const referrer = referrerRows[0];
+          if (!referrer?.userId || referrer.email === normalizedEmail) break;
+
+          // Find the referred userId from the subscription
+          const referredUserId = await findUserIdFromStripeIdentifiers({
+            customerId,
+            subscriptionId,
+          });
+
+          await db.insert(referrals).values({
+            referrerId: referrer.userId,
+            referralCode,
+            referredEmail: normalizedEmail,
+            referredUserId: referredUserId ?? null,
+            stripeSubscriptionId: subscriptionId,
+            status: "paid",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+          console.log(`[stripe-webhook] invoice.paid created referral row: ${referralCode} → ${normalizedEmail}`);
+
+          // Re-fetch the newly created row for milestone processing
+          const newRefRows = await db
+            .select({ id: referrals.id, referrerId: referrals.referrerId, status: referrals.status })
+            .from(referrals)
+            .where(and(eq(referrals.referralCode, referralCode), eq(referrals.referredEmail, normalizedEmail)))
+            .limit(1);
+          ref = newRefRows[0];
+          if (!ref) break;
+        }
+
+        if (!ref.referrerId) break;
+
+        // Bug #5 fix: Skip milestone processing if the referral is already "paid"
+        // (prevents duplicate rewards on recurring monthly invoices)
+        const wasAlreadyPaid = ref.status === "paid";
+
+        if (!wasAlreadyPaid) {
           await db
             .update(referrals)
             .set({ status: "paid", updatedAt: new Date().toISOString() })
             .where(eq(referrals.id, ref.id));
+        }
 
+        // Only process milestone rewards when transitioning to paid for the first time
+        if (!wasAlreadyPaid) {
           // Count paid referrals for this referrer
           const paidCountResult = await db
             .select({ count: sql<number>`count(*)` })
@@ -793,29 +858,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                   console.error("[stripe-webhook] Failed to apply referral credit:", creditError);
                 }
               }
-            }
-          }
-        }
-        break;
-      }
-
-      case "customer.subscription.updated": {
-        const stripeSubscription = event.data.object as Stripe.Subscription;
-        // Handle referral refunds — if a referred user's subscription is canceled/refunded,
-        // mark the referral as refunded so future rewards are not granted from this user
-        if (stripeSubscription.metadata?.referralCode && stripeSubscription.status === "canceled") {
-          const customerId = typeof stripeSubscription.customer === "string" ? stripeSubscription.customer : null;
-          if (customerId) {
-            const customer = await stripe.customers.retrieve(customerId);
-            const referredEmail = typeof customer === "object" ? customer.email ?? null : null;
-            if (referredEmail) {
-              const normalizedEmail = referredEmail.trim().toLowerCase();
-              const refCode = stripeSubscription.metadata.referralCode;
-              await db
-                .update(referrals)
-                .set({ status: "refunded", updatedAt: new Date().toISOString() })
-                .where(and(eq(referrals.referralCode, refCode), eq(referrals.referredEmail, normalizedEmail)));
-              console.log(`[stripe-webhook] Referral marked as refunded: ${refCode} → ${normalizedEmail}`);
             }
           }
         }

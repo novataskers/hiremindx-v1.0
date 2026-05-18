@@ -13,6 +13,7 @@ interface BetaSignupModalProps {
   onClose: () => void;
   prefillName?: string;
   prefillEmail?: string;
+  referralCode?: string;
 }
 
 export default function BetaSignupModal({
@@ -20,6 +21,7 @@ export default function BetaSignupModal({
   onClose,
   prefillName = "",
   prefillEmail = "",
+  referralCode,
 }: BetaSignupModalProps) {
   const [name, setName] = useState(prefillName);
   const [email, setEmail] = useState(prefillEmail);
@@ -61,7 +63,7 @@ export default function BetaSignupModal({
       const res = await fetch("/api/beta/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmedName, email: trimmedEmail, marketingConsent }),
+        body: JSON.stringify({ name: trimmedName, email: trimmedEmail, marketingConsent, ...(referralCode ? { referralCode } : {}) }),
       });
 
       const data = await res.json();

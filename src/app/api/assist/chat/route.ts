@@ -29,6 +29,8 @@ export const maxDuration = 120;
 
 // Primary key: research, streaming, main agent reasoning
 const mistralStream = createMistral({ apiKey: process.env.MISTRAL_API_KEY || "" });
+// Codestral: code-specialized model for canvas/live coding
+const mistralCode = createMistral({ apiKey: process.env.CODESTRAL_API_KEY || process.env.MISTRAL_API_KEY || "" });
 
 // ─── System prompt for research/general mode ─────────────────────────────────
 const RESEARCH_SYSTEM_PROMPT = `You are HireMindX Assist, an intelligent all-in-one AI assistant.
@@ -457,7 +459,8 @@ export async function POST(request: NextRequest) {
 
     // ── RESEARCH / DOCUMENT MODE (streaming) ─────────────────────────────
     let userMessageContent: any = message || "Please analyze this.";
-    let model = "mistral-large-latest";
+    // Dynamic model selection: fast by default, upgrade for complex tasks
+    let model = isCanvasRequest ? "codestral-latest" : "mistral-small-latest";
     let documentContext = "";
 
     if (file) {
@@ -496,12 +499,15 @@ export async function POST(request: NextRequest) {
           },
         ];
       } else if (isPDF) {
+        model = "mistral-large-latest";
         documentContext = await extractTextFromPDF(base64Data);
         userMessageContent = `[Document: ${fileName}]\n\n${documentContext}\n\nUser Question: ${message || "Analyze this document."}`;
       } else if (isDOCX || isDOC) {
+        model = "mistral-large-latest";
         documentContext = await extractTextFromDOCX(base64Data);
         userMessageContent = `[Document: ${fileName}]\n\n${documentContext}\n\nUser Question: ${message || "Analyze this document."}`;
       } else if (isTextLike) {
+        model = "mistral-large-latest";
         documentContext = await extractTextFromPlainFile(base64Data);
         userMessageContent = `[File: ${fileName}]\n[Type: ${fileType || "text/plain"}]\n\n${documentContext}\n\nUser Question: ${message || "Analyze this file."}`;
       }
@@ -553,6 +559,11 @@ export async function POST(request: NextRequest) {
           } catch (e) { console.error("Search error:", e); }
         }
       }
+
+    // Upgrade to Large for research-heavy queries with search context
+    if (sourcesForFrontend.length > 0 && !isCanvasRequest) {
+      model = "mistral-large-latest";
+    }
 
     let systemPrompt = RESEARCH_SYSTEM_PROMPT;
     if (isCanvasRequest) {
@@ -664,8 +675,9 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
       }
     }
 
+      const modelProvider = model === "codestral-latest" ? mistralCode : mistralStream;
       const streamResult = streamText({
-        model: mistralStream(model),
+        model: modelProvider(model),
         system: systemPrompt,
         messages: chatMessages,
         maxOutputTokens: isCanvasRequest ? 16000 : 4096,
