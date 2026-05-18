@@ -98,7 +98,7 @@ export const auth = betterAuth({
 								.where(eq(betaSignups.email, betaEmail))
 								.limit(1);
 							const betaRow = betaRows[0];
-							if (betaRow && !betaRow.welcomeEmailSent && betaRow.name) {
+							if (betaRow && !betaRow.welcomeEmailSent && betaRow.name && (betaRow.status === "trialing" || betaRow.status === "active")) {
 								let referralCode = betaRow.referralCode;
 								if (!referralCode) {
 									referralCode = randomUUID().replace(/-/g, "").slice(0, 12);

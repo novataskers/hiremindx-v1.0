@@ -144,7 +144,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Create Stripe Checkout Session with 14-day trial
     const baseUrl = getBaseURL();
-    const signupOrder = taken + 1;
+
+    // Use total row count (all statuses) for unique, monotonically increasing order numbers
+    const totalCountResult = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(betaSignups);
+    const signupOrder = Number(totalCountResult[0]?.count ?? 0) + 1;
 
     const checkoutMetadata: Record<string, string> = {
       betaSignup: "true",

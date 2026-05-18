@@ -49,23 +49,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         // Track pending state separately so frontend can show "complete payment" UI
         if (betaRows[0].status === "pending") {
           hasPending = true;
-
-          // Proactive sync: try to activate with Stripe in background
-          try {
-            const syncRes = await fetch(new URL("/api/beta/sync", request.url), {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ email }),
-            });
-            const syncData = await syncRes.json();
-            if (syncData.synced) {
-              memberStatus = syncData.status;
-              isMember = true;
-              hasPending = false;
-            }
-          } catch {
-            // Ignore sync errors, return current status
-          }
         }
       }
 

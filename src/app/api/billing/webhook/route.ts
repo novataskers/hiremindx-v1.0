@@ -307,8 +307,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           console.log("[stripe-webhook] Beta signup detected, email:", session.metadata.betaEmail);
           const betaEmail = session.metadata.betaEmail.trim().toLowerCase();
           const stripeSubscription = subscriptionId ? await stripe.subscriptions.retrieve(subscriptionId) : null;
-          const betaStatus = stripeSubscription?.status === "trialing" ? "trialing" : stripeSubscription?.status === "active" ? "active" : "active";
+          const betaStatus = stripeSubscription?.status === "trialing" ? "trialing" : stripeSubscription?.status === "active" ? "active" : stripeSubscription?.status ?? "pending";
           console.log("[stripe-webhook] Stripe subscription status:", stripeSubscription?.status, "=> betaStatus:", betaStatus);
+
+          // If no valid subscription or status is not trialing/active, only update the row — skip activation
+          if (betaStatus !== "trialing" && betaStatus !== "active") {
+            console.log("[stripe-webhook] Beta subscription not active/trialing, updating status only:", betaStatus);
+            await db
+              .update(betaSignups)
+              .set({
+                stripeSubscriptionId: subscriptionId,
+                stripeCustomerId: typeof customerId === "string" ? customerId : undefined,
+                status: betaStatus,
+              })
+              .where(eq(betaSignups.email, betaEmail));
+            break;
+          }
 
           // Fetch current beta signup to check existing referral code & email status
           const betaRows = await db
@@ -363,8 +377,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             await linkBetaSignup(userRows[0].id, betaEmail);
           }
 
-          // Send welcome email once
-          if (betaRow && !betaRow.welcomeEmailSent && betaRow.name) {
+          // Send welcome email once (only for verified trialing/active signups)
+          if (betaRow && !betaRow.welcomeEmailSent && betaRow.name && (betaStatus === "trialing" || betaStatus === "active")) {
             try {
               const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || "https://www.hiremindx.com";
               const trialEndDate = stripeSubscription?.current_period_end
@@ -859,6 +873,48 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                 }
               }
             }
+          }
+        }
+        break;
+      }
+
+      case "checkout.session.expired": {
+        const expiredSession = event.data.object as Stripe.Checkout.Session;
+        console.log("[stripe-webhook] checkout.session.expired, metadata:", expiredSession.metadata);
+
+        // ── Beta signup expired checkout cleanup ──
+        if (expiredSession.metadata?.betaSignup === "true" && expiredSession.metadata?.betaEmail) {
+          const betaEmail = expiredSession.metadata.betaEmail.trim().toLowerCase();
+          console.log("[stripe-webhook] Cleaning up expired beta checkout for:", betaEmail);
+
+          // Only delete if still pending (don't touch active/trialing rows that were activated via another event)
+          const betaRows = await db
+            .select({ id: betaSignups.id, status: betaSignups.status })
+            .from(betaSignups)
+            .where(eq(betaSignups.email, betaEmail))
+            .limit(1);
+
+          if (betaRows[0] && betaRows[0].status === "pending") {
+            await db.delete(betaSignups).where(eq(betaSignups.email, betaEmail));
+            console.log("[stripe-webhook] Deleted expired pending beta signup for:", betaEmail);
+          } else {
+            console.log("[stripe-webhook] Beta signup not pending (status:", betaRows[0]?.status, "), skipping cleanup");
+          }
+          break;
+        }
+
+        // ── Regular expired checkout cleanup ──
+        if (expiredSession.metadata?.userId) {
+          const expiredUserId = expiredSession.metadata.userId;
+          const subRows = await db
+            .select({ status: subscriptions.status, stripeCheckoutSessionId: subscriptions.stripeCheckoutSessionId })
+            .from(subscriptions)
+            .where(eq(subscriptions.userId, expiredUserId))
+            .limit(1);
+
+          if (subRows[0] && subRows[0].status === "pending" && subRows[0].stripeCheckoutSessionId === expiredSession.id) {
+            await db.delete(subscriptions).where(eq(subscriptions.userId, expiredUserId));
+            console.log("[stripe-webhook] Deleted expired pending subscription for user:", expiredUserId);
           }
         }
         break;

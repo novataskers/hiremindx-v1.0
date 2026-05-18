@@ -21,7 +21,7 @@ export const user = sqliteTable("user", {
   lastSeen: integer("last_seen"),
   marketingConsent: integer("marketing_consent", { mode: "boolean" }).notNull().default(false),
   marketingConsentAt: integer("marketing_consent_at", { mode: "timestamp" }),
-  // Beta/founding member fields
+  // @deprecated — Beta data lives in beta_signups + subscriptions tables. Do not read/write these columns.
   beta_status: text("beta_status"),
   signup_order: integer("signup_order"),
   referral_code: text("referral_code"),

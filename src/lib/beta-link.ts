@@ -24,7 +24,13 @@ export async function linkBetaSignup(userId: string, email: string): Promise<boo
     return false;
   }
 
-  // 2. Update userId if not already set
+  // 2. Only proceed if beta signup is verified (trialing or active)
+  if (beta.status !== "trialing" && beta.status !== "active") {
+    console.log("[beta-link] Beta signup not verified (status:", beta.status, "), skipping link for:", normalizedEmail);
+    return false;
+  }
+
+  // 3. Update userId if not already set
   if (!beta.userId) {
     await db
       .update(betaSignups)
