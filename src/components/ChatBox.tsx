@@ -128,7 +128,7 @@ export default function ChatBox() {
                 <div
                   className={`max-w-[75%] rounded-2xl px-4 py-3 ${
                     message.role === "ai"
-                      ? "bg-muted/50 backdrop-blur-sm border border-border/50 rounded-tl-sm prose prose-sm dark:prose-invert"
+                      ? "bg-muted/50 backdrop-blur-sm border border-border/50 rounded-tl-sm prose dark:prose-invert"
                       : "bg-primary/90 backdrop-blur-sm border border-primary rounded-tr-sm text-primary-foreground"
                   }`}
                 >

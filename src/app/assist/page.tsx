@@ -1609,7 +1609,7 @@ export default function AssistPage() {
                             </div>
                           ) : (
                             <>
-                              <div className={`prose prose-sm max-w-none ${isDark ? 'prose-invert text-zinc-200' : 'text-gray-800'} ${message.isStreaming ? 'streaming-cursor' : ''}`}>
+                              <div className={`prose max-w-none ${isDark ? 'prose-invert text-zinc-200' : 'text-gray-800'} ${message.isStreaming ? 'streaming-cursor' : ''}`}>
                                 <ReactMarkdown
                                   remarkPlugins={[remarkGfm]}
                                     components={{

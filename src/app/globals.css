@@ -83,6 +83,7 @@
 /* Updated: 2025-10-31T14:55:53.023Z */
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 
