@@ -80,6 +80,7 @@ export async function POST(request: NextRequest) {
       documentResults,
       govResults,
       archiveResults,
+      recentResults,
     ] = await Promise.all([
       // Standard comprehensive search
       searchWithSerper(cleanPrompt, 5).catch(() => []),
@@ -98,6 +99,8 @@ export async function POST(request: NextRequest) {
         `${cleanPrompt} site:archive.org OR site:documentcloud.org OR site:scribd.com OR site:courtlistener.com OR site:law.cornell.edu OR "public record" OR "court filing"`,
         5
       ).catch(() => []),
+      // Recent results search — prioritizes sources from the past week
+      searchWithSerper(cleanPrompt, 5, { recency: 'week' }).catch(() => []),
     ]);
 
     // Combine and deduplicate results
@@ -118,6 +121,8 @@ export async function POST(request: NextRequest) {
       }
     };
 
+    // Add recent results FIRST so they appear at the top and get priority in the AI summary
+    addResults(recentResults);
     addResults(standardResults);
     addResults(documentResults);
     addResults(govResults);
@@ -146,11 +151,12 @@ export async function POST(request: NextRequest) {
 
 Based on these research results, provide a comprehensive intelligence briefing (4-6 sentences). Be specific — cite data points, names, dates. Reference specific documents or files found. If the user asked to find a specific document or file, mention exactly which result contains it and the direct link.
 
-Research data:
+Research data (freshest sources are listed first):
 ${allSnippets.substring(0, 4000)}
 
 Rules:
 - Be factual and detailed
+- Prioritize the most recent information — when reporting data like prices, statistics, or current events, use the newest source available (the ones listed first)
 - Reference specific sources by name
 - If documents/PDFs were found, highlight them specifically
 - No disclaimers or hedging — deliver the intelligence directly

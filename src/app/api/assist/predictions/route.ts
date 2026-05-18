@@ -157,12 +157,17 @@ export async function POST(request: NextRequest) {
       .slice(0, 15)
       .map(([kw, count]) => ({ keyword: kw, count }));
 
-    // 3. Search for current global trends related to the prediction query
+    // 3. Search for current live data AND global trends (two parallel searches)
     let trendData: any[] = [];
     try {
-      const searchResults = await searchWithSerper(`${prompt} trends 2025 2026 forecast`, 8);
-      if (searchResults?.length > 0) {
-        trendData = searchResults.map((s: any) => ({
+      const [liveResults, forecastResults] = await Promise.all([
+        searchWithSerper(prompt, 5, { recency: 'day' }).catch(() => []),
+        searchWithSerper(`${prompt} trends forecast`, 4).catch(() => []),
+      ]);
+      // Live results first so AI prioritizes current data
+      const combined = [...(liveResults || []), ...(forecastResults || [])];
+      if (combined.length > 0) {
+        trendData = combined.map((s: any) => ({
           title: s.title,
           snippet: s.snippet,
           url: s.link,
@@ -194,7 +199,7 @@ ${[...new Set(allEntities)].slice(0, 20).join(", ")}
       : "No prior research history available. Generate prediction based on global data only.";
 
     const globalTrends = trendData.length > 0
-      ? `## Current Global Trend Data:\n${trendData.map((t, i) => `${i + 1}. ${t.title}\n   ${t.snippet}`).join("\n\n")}`
+      ? `## Current Live Data & Global Trends (freshest results first):\n${trendData.map((t, i) => `${i + 1}. ${t.title}\n   ${t.snippet}`).join("\n\n")}`
       : "No specific trend data found.";
 
     const predictionPrompt = `You are a Prediction Intelligence Engine. Your job is to generate data-driven predictions by cross-referencing a user's personal research patterns with current global trends.
@@ -224,10 +229,12 @@ Generate a prediction in the following strict JSON format (NO markdown, just raw
 }
 
 CRITICAL RULES:
+- Use the CURRENT LIVE DATA results (listed first) to ground your prediction in today's reality. Reference actual current prices, numbers, or facts from the live search results.
 - Confidence MUST be between 40 and 95. Never 100% or below 40%.
 - If user has relevant research history, reference it to personalize the prediction.
 - If no research history, base prediction on global trends only and set confidence lower (40-65%).
 - Make predictions SPECIFIC and DATA-DRIVEN, not vague platitudes.
+- The "Present" timeline MUST reflect the actual current state from the live data results.
 - The "Past" timeline should reference the user's actual research if available.
 - Output ONLY valid JSON, no markdown fences, no extra text.`;
 

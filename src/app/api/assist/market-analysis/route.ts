@@ -4,6 +4,7 @@ import { streamText } from "ai";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { useFeature } from "@/lib/usage-limits";
+import { searchWithSerper } from "@/lib/search-utils";
 
 const mistral = createMistral({ apiKey: process.env.MISTRAL_API_KEY! });
 
@@ -103,7 +104,7 @@ async function fetchCryptoPrices(symbols: string[]): Promise<PriceData[]> {
   try {
     const res = await fetch(
       `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&sparkline=false&price_change_percentage=24h`,
-      { headers: { Accept: "application/json" }, next: { revalidate: 30 } }
+      { headers: { Accept: "application/json" }, cache: "no-store" }
     );
     if (!res.ok) return [];
     const data = await res.json();
@@ -132,7 +133,7 @@ async function fetchStockPrices(symbols: string[]): Promise<PriceData[]> {
     try {
       const res = await fetch(
         `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`,
-        { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 30 } }
+        { headers: { "User-Agent": "Mozilla/5.0" }, cache: "no-store" }
       );
       if (!res.ok) continue;
       const data = await res.json();
@@ -175,7 +176,7 @@ async function fetchMarketNews(query: string): Promise<NewsItem[]> {
         "X-API-KEY": process.env.SERPER_API_KEY!,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ q: `${query} market analysis trading`, num: 12, gl: "us" }),
+      body: JSON.stringify({ q: `${query} market analysis trading`, num: 12, gl: "us", tbs: "qdr:d" }),
     });
     if (!res.ok) return [];
     const data = await res.json();
@@ -213,7 +214,7 @@ async function fetchMarketNews(query: string): Promise<NewsItem[]> {
 async function fetchFearGreedIndex(): Promise<{ value: number; label: string } | null> {
   try {
     const res = await fetch("https://api.alternative.me/fng/?limit=1", {
-      next: { revalidate: 60 },
+      cache: "no-store",
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -359,8 +360,20 @@ export async function POST(req: NextRequest) {
           send({ type: "fearGreed", data: fearGreed });
         }
 
-        // Step 5 — AI analysis & signals (the big one)
-        send({ type: "step", step: 5, label: "Generating AI trade signals with risk analysis...", status: "running" });
+        // Step 5 — Live web search for real-time context
+        send({ type: "step", step: 5, label: "Fetching real-time web data...", status: "running" });
+        let liveWebContext = "";
+        try {
+          const webResults = await searchWithSerper(prompt, 4, { recency: 'day' });
+          if (webResults?.length > 0) {
+            liveWebContext = "\n\nLIVE WEB SEARCH RESULTS (freshest data from today):\n" +
+              webResults.map((r, i) => `${i + 1}. ${r.title}: ${r.snippet}`).join("\n");
+          }
+        } catch {}
+        send({ type: "step", step: 5, label: "Real-time web data collected", status: "done" });
+
+        // Step 6 — AI analysis & signals (the big one)
+        send({ type: "step", step: 6, label: "Generating AI trade signals with risk analysis...", status: "running" });
 
         const newsContext = news.slice(0, 8).map(n =>
           `[${n.sentiment.toUpperCase()}] ${n.title} (${n.source})`
@@ -451,10 +464,11 @@ ${technicalContext}
 
 LIVE NEWS SENTIMENT (${sentiment.label} — ${sentiment.breakdown.positive} positive, ${sentiment.breakdown.negative} negative, ${sentiment.breakdown.neutral} neutral out of ${news.length} articles):
 ${newsContext}
-${fearGreedContext}
+${fearGreedContext}${liveWebContext}
+
 User question: ${prompt}`;
 
-          send({ type: "step", step: 5, label: "Generating AI trade signals with risk analysis...", status: "done" });
+          send({ type: "step", step: 6, label: "Generating AI trade signals with risk analysis...", status: "done" });
           send({ type: "analysis_start" });
 
           const result = streamText({

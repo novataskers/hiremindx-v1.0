@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, ExternalLink, Loader2, CheckCircle2, Activity, Newspaper, Zap, BarChart2, Shield, Gauge } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, ExternalLink, Loader2, CheckCircle2, Activity, Newspaper, Zap, BarChart2, Shield, Gauge, Globe } from "lucide-react";
 
 interface PriceData {
   symbol: string;
@@ -43,7 +43,7 @@ interface MarketAgentCardProps {
   onDone?: () => void;
 }
 
-const STEP_ICONS = [Activity, BarChart2, Newspaper, Gauge, Zap];
+const STEP_ICONS = [Activity, BarChart2, Newspaper, Gauge, Globe, Zap];
 
 function fmt(n: number | undefined, decimals = 2): string {
   if (n === undefined || n === null || isNaN(n)) return "—";
