@@ -4,6 +4,7 @@ import { bearer } from "better-auth/plugins";
 import { NextRequest } from 'next/server';
 import { headers } from "next/headers"
 import { db } from "@/db";
+import { user, session, account, verification } from "@/db/schema";
  
 export const getBaseURL = () => {
 	let url = "";
@@ -29,6 +30,7 @@ export const auth = betterAuth({
 	],
 	database: drizzleAdapter(db, {
 		provider: "sqlite",
+		schema: { user, session, account, verification },
 	}),
 	emailAndPassword: {    
 		enabled: true
@@ -69,67 +71,76 @@ export const auth = betterAuth({
 		user: {
 			create: {
 				after: async (user) => {
-					try {
-						const { linkBetaSignup } = await import("@/lib/beta-link");
-						if (user.email) {
-							await linkBetaSignup(user.id, user.email);
+					// IMPORTANT: This hook runs INSIDE the createOAuthUser transaction.
+					// Any DB writes via the global `db` will deadlock (blocked by tx write lock).
+					// So we fire-and-forget all post-creation work to avoid blocking the transaction.
+					const doPostCreateWork = async () => {
+						try {
+							const { linkBetaSignup } = await import("@/lib/beta-link");
+							if (user.email) {
+								await linkBetaSignup(user.id, user.email);
+							}
+						} catch (e) {
+							console.error("[auth-hook] beta link failed:", e);
 						}
-					} catch (e) {
-						console.error("[auth-hook] beta link failed:", e);
-					}
 
-					// Fallback: send welcome email if webhook already fired but user wasn't linked yet
-					try {
-						if (!user.email) return;
-						const { eq } = await import("drizzle-orm");
-						const { betaSignups } = await import("@/db/schema");
-						const { db } = await import("@/db");
-						const { sendBetaWelcomeEmail } = await import("@/lib/email");
-						const { randomUUID } = await import("crypto");
-						const betaEmail = user.email.trim().toLowerCase();
-						const betaRows = await db
-							.select()
-							.from(betaSignups)
-							.where(eq(betaSignups.email, betaEmail))
-							.limit(1);
-						const betaRow = betaRows[0];
-						if (betaRow && !betaRow.welcomeEmailSent && betaRow.name) {
-							let referralCode = betaRow.referralCode;
-							if (!referralCode) {
-								referralCode = randomUUID().replace(/-/g, "").slice(0, 12);
-								await db.update(betaSignups).set({ referralCode }).where(eq(betaSignups.email, betaEmail));
+						try {
+							if (!user.email) return;
+							const { eq } = await import("drizzle-orm");
+							const { betaSignups } = await import("@/db/schema");
+							const { db } = await import("@/db");
+							const { sendBetaWelcomeEmail } = await import("@/lib/email");
+							const { randomUUID } = await import("crypto");
+							const betaEmail = user.email.trim().toLowerCase();
+							const betaRows = await db
+								.select()
+								.from(betaSignups)
+								.where(eq(betaSignups.email, betaEmail))
+								.limit(1);
+							const betaRow = betaRows[0];
+							if (betaRow && !betaRow.welcomeEmailSent && betaRow.name) {
+								let referralCode = betaRow.referralCode;
+								if (!referralCode) {
+									referralCode = randomUUID().replace(/-/g, "").slice(0, 12);
+									await db.update(betaSignups).set({ referralCode }).where(eq(betaSignups.email, betaEmail));
+								}
+								const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || "https://www.hiremindx.com";
+								console.log(`[auth-hook] Sending delayed welcome email to: ${betaEmail}, founder #${betaRow.signupOrder}`);
+								const emailResult = await sendBetaWelcomeEmail({
+									to: betaEmail,
+									subject: `You're In! Welcome to HireMindX Founding Beta`,
+									title: "You're One of the First 100",
+									summary: `Congratulations ${betaRow.name}, you've been selected as Founding Member #${betaRow.signupOrder} of HireMindX! As one of only 100 founding beta members, you've secured exclusive lifetime benefits: 50% discount (£9.99/month vs £19.99), 14-day free trial of Elite features, and priority access to new features.`,
+									previewText: `You're in! Welcome to HireMindX Founding Beta as Founding Member #${betaRow.signupOrder}`,
+									ctaLabel: "Start Your Elite Trial",
+									ctaUrl: "/assist",
+									recipientName: betaRow.name,
+									metadata: [
+										{ label: "Founder Number", value: `#${betaRow.signupOrder}` },
+										{ label: "Plan", value: "Elite (Founding Member)" },
+										{ label: "Price", value: "£9.99/month (50% off for life)" },
+										{ label: "Free Trial", value: "14 days" },
+										{ label: "Referral Link", value: `${siteUrl.replace(/\/$/, "")}/premium?ref=${referralCode}` },
+										{ label: "Referral Rewards", value: "Refer 1 = 1 free month | 5 = 3 more | 10 = 6 more + Badge + VIP Access" },
+									],
+								});
+								console.log(`[auth-hook] Welcome email result: success=${emailResult.success}, skipped=${emailResult.skipped}, messageId=${emailResult.messageId}, error=${emailResult.error}`);
+								if (emailResult.success) {
+									await db.update(betaSignups).set({ welcomeEmailSent: true }).where(eq(betaSignups.email, betaEmail));
+									console.log("[auth-hook] welcomeEmailSent set to true");
+								} else {
+									console.warn("[auth-hook] Email did not send successfully, keeping welcomeEmailSent=false for retry");
+								}
 							}
-							const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || "https://www.hiremindx.com";
-							console.log(`[auth-hook] Sending delayed welcome email to: ${betaEmail}, founder #${betaRow.signupOrder}`);
-							const emailResult = await sendBetaWelcomeEmail({
-								to: betaEmail,
-								subject: `You're In! Welcome to HireMindX Founding Beta`,
-								title: "You're One of the First 100",
-								summary: `Congratulations ${betaRow.name}, you've been selected as Founding Member #${betaRow.signupOrder} of HireMindX! As one of only 100 founding beta members, you've secured exclusive lifetime benefits: 50% discount (£9.99/month vs £19.99), 14-day free trial of Elite features, and priority access to new features.`,
-								previewText: `You're in! Welcome to HireMindX Founding Beta as Founding Member #${betaRow.signupOrder}`,
-								ctaLabel: "Start Your Elite Trial",
-								ctaUrl: "/assist",
-								recipientName: betaRow.name,
-								metadata: [
-									{ label: "Founder Number", value: `#${betaRow.signupOrder}` },
-									{ label: "Plan", value: "Elite (Founding Member)" },
-									{ label: "Price", value: "£9.99/month (50% off for life)" },
-									{ label: "Free Trial", value: "14 days" },
-									{ label: "Referral Link", value: `${siteUrl.replace(/\/$/, "")}/premium?ref=${referralCode}` },
-									{ label: "Referral Rewards", value: "Refer 1 = 1 free month | 5 = 3 more | 10 = 6 more + Badge + VIP Access" },
-								],
-							});
-							console.log(`[auth-hook] Welcome email result: success=${emailResult.success}, skipped=${emailResult.skipped}, messageId=${emailResult.messageId}, error=${emailResult.error}`);
-							if (emailResult.success) {
-								await db.update(betaSignups).set({ welcomeEmailSent: true }).where(eq(betaSignups.email, betaEmail));
-								console.log("[auth-hook] welcomeEmailSent set to true");
-							} else {
-								console.warn("[auth-hook] Email did not send successfully, keeping welcomeEmailSent=false for retry");
-							}
+						} catch (emailError) {
+							console.error("[auth-hook] Delayed welcome email failed:", emailError);
 						}
-					} catch (emailError) {
-						console.error("[auth-hook] Delayed welcome email failed:", emailError);
-					}
+					};
+
+					// Fire-and-forget: don't await, so the transaction can commit immediately
+					doPostCreateWork().catch((e) =>
+						console.error("[auth-hook] post-create work failed:", e)
+					);
 				},
 			},
 		},
