@@ -78,8 +78,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       const referrer = referrerRows[0];
       if (!referrer) {
-        return jsonError("Invalid referral code.", 400);
-      }
+        console.warn("[beta-signup] Referral code not found, ignoring:", referralCode);
+        // Proceed without referral rather than blocking signup for stale/invalid cookie codes
+        referrerStripeCustomerId = undefined;
+      } else {
 
       // Self-referral guard
       if (referrer.email === email) {
@@ -116,7 +118,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return jsonError("Already referred with this link.", 409);
       }
 
-      referrerStripeCustomerId = referrer.stripeCustomerId ?? undefined;
+        referrerStripeCustomerId = referrer.stripeCustomerId ?? undefined;
+      }
     }
 
     // Count active/trialing signups only (exclude pending and canceled)
