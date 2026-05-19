@@ -4,7 +4,7 @@ import { streamText } from "ai";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { useFeature } from "@/lib/usage-limits";
-import { searchWithSerper } from "@/lib/search-utils";
+import { searchWithSerper, getDateContext } from "@/lib/search-utils";
 
 const mistral = createMistral({ apiKey: process.env.MISTRAL_API_KEY! });
 
@@ -383,7 +383,7 @@ export async function POST(req: NextRequest) {
           ? `\nFEAR & GREED INDEX: ${fearGreed.value}/100 (${fearGreed.label})\n- 0-25: Extreme Fear (historically = strong BUY zone)\n- 25-45: Fear (potential accumulation zone)\n- 45-55: Neutral\n- 55-75: Greed (caution, potential top forming)\n- 75-100: Extreme Greed (historically = strong SELL zone / take profit)\n`
           : "";
 
-        const systemPrompt = `You are an elite quantitative trading analyst and AI market intelligence system with institutional-grade analysis capabilities. You have LIVE real-time market data, news sentiment, and technical indicators fed directly into your context. Your signals are used by professional traders.
+        const systemPrompt = `${getDateContext()}\n\nYou are an elite quantitative trading analyst and AI market intelligence system with institutional-grade analysis capabilities. You have LIVE real-time market data, news sentiment, and technical indicators fed directly into your context. Your signals are used by professional traders.
 
 ## YOUR ANALYSIS FRAMEWORK
 

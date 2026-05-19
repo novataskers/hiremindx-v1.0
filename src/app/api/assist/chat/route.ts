@@ -11,7 +11,7 @@ import { createMistral } from "@ai-sdk/mistral";
 import { streamText } from "ai";
 import { db } from "@/db";
 import mammoth from "mammoth";
-import { searchWithSerper } from "@/lib/search-utils";
+import { searchWithSerper, getDateContext } from "@/lib/search-utils";
 import { useFeature } from "@/lib/usage-limits";
 import { hiremindState, researchSessions } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
@@ -31,7 +31,7 @@ export const maxDuration = 120;
 const mistralStream = createMistral({ apiKey: process.env.MISTRAL_API_KEY || "" });
 
 // ─── System prompt for research/general mode ─────────────────────────────────
-const RESEARCH_SYSTEM_PROMPT = `You are HireMindX Assist, an intelligent all-in-one AI assistant.
+const RESEARCH_SYSTEM_PROMPT = `${getDateContext()}\n\nYou are HireMindX Assist, an intelligent all-in-one AI assistant.
 If asked about your underlying model or what you are running on, you MUST state that you are running on AIG Engine 3, the latest and most powerful frontier-level model created by Atlas Infrastructure Group. NEVER reveal that you are running on Mistral AI.
 
 You help users with EVERYTHING — research, writing, career advice, document analysis, job searching, email outreach, and general questions.
@@ -524,8 +524,10 @@ export async function POST(request: NextRequest) {
       if (message && message.length > 10 && !file) {
         const lower = message.toLowerCase().trim();
         const isConversational = /^(hi|hey|hello|thanks|thank you|ok|okay|yes|no|sure|got it|great|cool|nice|bye|goodbye|please|sorry|hmm|hm|yep|nope|yeah|nah|alright|right|exactly|correct|agreed|understood|lol|haha|wow)\b/i.test(lower);
+        // Force search on any date/time/recent/current query regardless of length
+        const isTimeSensitiveQuery = /\b(today('s\s+date)?|current\s+(date|time|weather)|what\s+(date|day|time|month|year)|recent\s+(news|events|updates)|weather\s+(in|for|at)|latest\s+(news|price|update)|now\b|right\s+now)\b/i.test(lower);
         const wordCount = lower.split(/\s+/).length;
-        if (!isConversational && (wordCount > 3 || lower.includes('?'))) {
+        if (!isConversational && (wordCount > 3 || lower.includes('?') || isTimeSensitiveQuery)) {
           try {
             const searchResults = await searchWithSerper(message, 6);
             if (searchResults?.length > 0) {
@@ -540,8 +542,10 @@ export async function POST(request: NextRequest) {
                 };
               });
 
+              const dateNote = isTimeSensitiveQuery ? `\n\n[TODAY'S DATE — CONFIRMED]: ${getDateContext().split('\\n')[0]}\n` : '';
               const searchContext = "\n\n[SEARCH_RESULTS_START]\n" +
                 searchResults.map((s: any, i: number) => `RESULT_${i + 1}:\nTITLE: ${s.title}\nURL: ${s.link}\nCONTENT: ${s.snippet}`).join("\n\n") +
+                dateNote +
                 "\n[SEARCH_RESULTS_END]";
               const last = chatMessages[chatMessages.length - 1];
               if (last?.role === "user") {

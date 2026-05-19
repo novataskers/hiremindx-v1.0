@@ -10,7 +10,7 @@ import { headers } from "next/headers";
 import { db } from "@/db";
 import { researchSessions, predictions } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
-import { searchWithSerper } from "@/lib/search-utils";
+import { searchWithSerper, getDateContext } from "@/lib/search-utils";
 import { useFeature } from "@/lib/usage-limits";
 
 export const maxDuration = 60;
@@ -202,7 +202,7 @@ ${[...new Set(allEntities)].slice(0, 20).join(", ")}
       ? `## Current Live Data & Global Trends (freshest results first):\n${trendData.map((t, i) => `${i + 1}. ${t.title}\n   ${t.snippet}`).join("\n\n")}`
       : "No specific trend data found.";
 
-    const predictionPrompt = `You are a Prediction Intelligence Engine. Your job is to generate data-driven predictions by cross-referencing a user's personal research patterns with current global trends.
+    const predictionPrompt = `${getDateContext()}\n\nYou are a Prediction Intelligence Engine. Your job is to generate data-driven predictions by cross-referencing a user's personal research patterns with current global trends.
 
 ${researchContext}
 

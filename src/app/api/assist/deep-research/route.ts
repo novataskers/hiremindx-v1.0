@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { searchWithSerper } from "@/lib/search-utils";
+import { searchWithSerper, getDateContext } from "@/lib/search-utils";
 import { useFeature } from "@/lib/usage-limits";
 
 export const maxDuration = 60;
@@ -147,7 +147,7 @@ export async function POST(request: NextRequest) {
           model: "mistral-large-latest",
           messages: [{
             role: "user",
-            content: `You are a deep research intelligence analyst. The user asked: "${cleanPrompt}"
+            content: `${getDateContext()}\n\nYou are a deep research intelligence analyst. The user asked: "${cleanPrompt}"
 
 Based on these research results, provide a comprehensive intelligence briefing (4-6 sentences). Be specific — cite data points, names, dates. Reference specific documents or files found. If the user asked to find a specific document or file, mention exactly which result contains it and the direct link.
 
