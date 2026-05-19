@@ -64,6 +64,34 @@ export default function RootLayout({
             `,
           }}
         />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                var DEPLOY_CHECK_INTERVAL = 30000;
+                var currentVersion = null;
+                var checkVersion = function() {
+                  try {
+                    fetch('/api/version', { cache: 'no-store' })
+                      .then(function(r) { return r.json(); })
+                      .then(function(data) {
+                        if (!currentVersion) {
+                          currentVersion = data.version;
+                        } else if (currentVersion !== data.version) {
+                          console.log('[deploy-check] New version detected, reloading...');
+                          window.location.reload();
+                        }
+                      })
+                      .catch(function() {});
+                  } catch (e) {}
+                };
+                checkVersion();
+                setInterval(checkVersion, DEPLOY_CHECK_INTERVAL);
+                window.addEventListener('focus', checkVersion);
+              })();
+            `,
+          }}
+        />
       </head>
       <body className="antialiased">
         <Script

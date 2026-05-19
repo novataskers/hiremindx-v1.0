@@ -3,15 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { deliverables } from "@/db/schema";
 import { eq, desc, and } from "drizzle-orm";
-
-function buildAuthHeaders(req: NextRequest) {
-  const h = new Headers(req.headers);
-  const cookie = req.headers.get("cookie");
-  if (cookie) h.set("cookie", cookie);
-  const authz = req.headers.get("authorization");
-  if (authz) h.set("authorization", authz);
-  return h;
-}
+import { buildAuthHeaders } from "@/lib/auth-headers";
 
 // GET — fetch deliverables for a contract
 export async function GET(req: NextRequest) {

@@ -3,15 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { communityDMs } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-
-function buildAuthHeaders(req: NextRequest) {
-  const h = new Headers(req.headers);
-  const cookie = req.headers.get("cookie");
-  if (cookie) h.set("cookie", cookie);
-  const authz = req.headers.get("authorization");
-  if (authz) h.set("authorization", authz);
-  return h;
-}
+import { buildAuthHeaders } from "@/lib/auth-headers";
 
 export async function GET(req: NextRequest) {
   const session = await auth.api.getSession({ headers: buildAuthHeaders(req) });

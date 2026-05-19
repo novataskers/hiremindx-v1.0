@@ -5,15 +5,7 @@ import { escrowTransactions, freelancerWallets, walletTransactions, cancellation
 import { and, eq, desc, like, or } from "drizzle-orm";
 import { getStripeClient } from "@/lib/stripe";
 import { sendHireMindXEmailNotification } from "@/lib/email";
-
-function buildAuthHeaders(req: NextRequest) {
-  const h = new Headers(req.headers);
-  const cookie = req.headers.get("cookie");
-  if (cookie) h.set("cookie", cookie);
-  const authz = req.headers.get("authorization");
-  if (authz) h.set("authorization", authz);
-  return h;
-}
+import { buildAuthHeaders } from "@/lib/auth-headers";
 
 const GRACE_PERIOD_MS = 12 * 60 * 60 * 1000; // 12 hours
 

@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { communityDMs, communityProfiles, notifications, user } from "@/db/schema";
 import { eq, or, and, desc, inArray, gt, lt } from "drizzle-orm";
 import sendHireMindXEmailNotification from "@/lib/email/sendHireMindXEmailNotification";
+import { buildAuthHeaders } from "@/lib/auth-headers";
 
 function formatConversationPreview(message: string) {
   if (typeof message !== "string") return "";
@@ -44,14 +45,7 @@ function formatConversationPreview(message: string) {
   return message;
 }
 
-function buildAuthHeaders(req: NextRequest) {
-  const h = new Headers(req.headers);
-  const cookie = req.headers.get("cookie");
-  if (cookie) h.set("cookie", cookie);
-  const authz = req.headers.get("authorization");
-  if (authz) h.set("authorization", authz);
-  return h;
-}
+
 
 function normalizeAttachmentsValue(value: unknown) {
   if (!value) return null;

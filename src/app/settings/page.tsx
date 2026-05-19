@@ -160,8 +160,19 @@ export default function Settings(): JSX.Element {
 
     void loadSubscription();
 
+    const interval = setInterval(() => {
+      if (isMounted) void loadSubscription();
+    }, 60000);
+
+    const handleFocus = () => {
+      if (isMounted) void loadSubscription();
+    };
+    window.addEventListener("focus", handleFocus);
+
     return () => {
       isMounted = false;
+      clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
     };
   }, []);
 

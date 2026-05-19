@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { paymentMethods } from "@/db/schema";
 import { and, eq, desc, sql } from "drizzle-orm";
+import { buildAuthHeaders } from "@/lib/auth-headers";
 
 async function ensurePaymentMethodsTable() {
   try {
@@ -26,15 +27,6 @@ async function ensurePaymentMethodsTable() {
   } catch (err) {
     console.error("[ensurePaymentMethodsTable] Error creating table:", err);
   }
-}
-
-function buildAuthHeaders(req: NextRequest) {
-  const h = new Headers(req.headers);
-  const cookie = req.headers.get("cookie");
-  if (cookie) h.set("cookie", cookie);
-  const authz = req.headers.get("authorization");
-  if (authz) h.set("authorization", authz);
-  return h;
 }
 
 // GET — fetch saved payment methods

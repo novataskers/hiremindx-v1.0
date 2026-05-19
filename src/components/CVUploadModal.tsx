@@ -91,12 +91,10 @@ export default function CVUploadModal({ open, onOpenChange }: CVUploadModalProps
 
       // Analyze CV
       toast.info("Analyzing your CV with AI...");
-      const token = localStorage.getItem("bearer_token");
       const analysisResponse = await fetch("/api/cv-analysis", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           cvText,
@@ -126,7 +124,6 @@ export default function CVUploadModal({ open, onOpenChange }: CVUploadModalProps
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           cvAnalysisId: analysis.id,

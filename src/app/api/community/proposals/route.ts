@@ -3,15 +3,7 @@ import { db } from "@/db";
 import { proposals, clientProjects, communityProfiles } from "@/db/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-
-function buildAuthHeaders(req: NextRequest) {
-  const h = new Headers(req.headers);
-  const cookie = req.headers.get("cookie");
-  if (cookie) h.set("cookie", cookie);
-  const authz = req.headers.get("authorization");
-  if (authz) h.set("authorization", authz);
-  return h;
-}
+import { buildAuthHeaders } from "@/lib/auth-headers";
 
 export async function GET(request: NextRequest) {
   try {

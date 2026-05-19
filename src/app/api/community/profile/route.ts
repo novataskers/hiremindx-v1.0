@@ -3,15 +3,7 @@ import { db } from "@/db";
 import { communityProfiles, freelancerPortfolio, user } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-
-function buildAuthHeaders(req: NextRequest) {
-  const h = new Headers(req.headers);
-  const cookie = req.headers.get("cookie");
-  if (cookie) h.set("cookie", cookie);
-  const authz = req.headers.get("authorization");
-  if (authz) h.set("authorization", authz);
-  return h;
-}
+import { buildAuthHeaders } from "@/lib/auth-headers";
 
 function safeJsonParse(value: unknown) {
   if (typeof value !== "string") return value ?? null;

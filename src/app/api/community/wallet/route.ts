@@ -4,15 +4,7 @@ import { db } from "@/db";
 import { freelancerWallets, walletTransactions, notifications, escrowTransactions } from "@/db/schema";
 import { eq, desc, and } from "drizzle-orm";
 import { getStripeClient } from "@/lib/stripe";
-
-function buildAuthHeaders(req: NextRequest) {
-  const h = new Headers(req.headers);
-  const cookie = req.headers.get("cookie");
-  if (cookie) h.set("cookie", cookie);
-  const authz = req.headers.get("authorization");
-  if (authz) h.set("authorization", authz);
-  return h;
-}
+import { buildAuthHeaders } from "@/lib/auth-headers";
 
 // GET — fetch wallet balance and transaction history
 export async function GET(req: NextRequest) {

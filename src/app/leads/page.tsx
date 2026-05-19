@@ -115,7 +115,6 @@ export default function Leads() {
   const fetchLeads = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem("bearer_token");
       const params = new URLSearchParams();
 
       if (statusFilter !== "all") params.append("status", statusFilter);
@@ -123,11 +122,7 @@ export default function Leads() {
       if (searchQuery) params.append("search", searchQuery);
       params.append("limit", "50");
 
-      const response = await fetch(`/api/leads?${params.toString()}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await fetch(`/api/leads?${params.toString()}`);
 
       if (!response.ok) throw new Error("Failed to fetch leads");
 
@@ -156,12 +151,10 @@ export default function Leads() {
     if (!selectedLead) return;
 
     try {
-      const token = localStorage.getItem("bearer_token");
       const response = await fetch(`/api/leads/${selectedLead.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(editForm),
       });
@@ -181,12 +174,8 @@ export default function Leads() {
     if (!selectedLead) return;
 
     try {
-      const token = localStorage.getItem("bearer_token");
       const response = await fetch(`/api/leads/${selectedLead.id}`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
 
       if (!response.ok) throw new Error("Failed to delete lead");
@@ -208,12 +197,10 @@ export default function Leads() {
 
     try {
       setIsSending(true);
-      const token = localStorage.getItem("bearer_token");
       const response = await fetch("/api/email-campaigns", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           leadId: selectedLead.id,
@@ -234,7 +221,6 @@ export default function Leads() {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ status: "contacted" }),
       });

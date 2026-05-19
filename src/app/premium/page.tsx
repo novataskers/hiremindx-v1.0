@@ -294,6 +294,25 @@ function PremiumPageContent() {
     }
   }, [session, loadSubscription]);
 
+  // Revalidate subscription on focus and periodically
+  useEffect(() => {
+    if (!session?.user) return;
+
+    const interval = setInterval(() => {
+      loadSubscription();
+    }, 60000);
+
+    const handleFocus = () => {
+      loadSubscription();
+    };
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [session, loadSubscription]);
+
   useEffect(() => {
     let isActive = true;
     const controller = new AbortController();

@@ -128,12 +128,7 @@ export default function Campaigns() {
   const fetchCampaigns = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem("bearer_token");
-      const response = await fetch("/api/email-campaigns?limit=50", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await fetch("/api/email-campaigns?limit=50");
 
       if (!response.ok) throw new Error("Failed to fetch campaigns");
 
@@ -148,12 +143,7 @@ export default function Campaigns() {
 
   const fetchStats = async () => {
     try {
-      const token = localStorage.getItem("bearer_token");
-      const response = await fetch("/api/email-campaigns/stats", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await fetch("/api/email-campaigns/stats");
 
       if (!response.ok) throw new Error("Failed to fetch stats");
 
