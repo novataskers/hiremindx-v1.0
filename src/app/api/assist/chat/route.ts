@@ -13,6 +13,7 @@ import { db } from "@/db";
 import mammoth from "mammoth";
 import { searchWithSerper, getDateContext } from "@/lib/search-utils";
 import { useFeature } from "@/lib/usage-limits";
+import { fetchFromR2, deleteFromR2 } from "@/lib/r2";
 import { hiremindState, researchSessions } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getEmailToken, type EmailProvider } from "@/lib/google-auth";
@@ -221,6 +222,12 @@ async function saveUserState(userId: string, state: ConversationState): Promise<
   } catch (e) { console.error("Error saving user state:", e); }
 }
 
+// ─── Text truncation helper ─────────────────────────────────────────────────
+function truncateText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return text.slice(0, maxChars) + "\n\n[Content truncated due to length. Summary continues...]";
+}
+
 // ─── Document extraction ──────────────────────────────────────────────────────
 async function extractTextFromPDF(base64Data: string): Promise<string> {
   const res = await fetch("https://api.mistral.ai/v1/ocr", {
@@ -265,6 +272,7 @@ async function resolveUserId(headersList: Headers): Promise<string | null> {
 }
 
 export async function POST(request: NextRequest) {
+  const fileUrlsToDelete: string[] = [];
   try {
     const headersList = await headers();
     const userId = await resolveUserId(headersList);
@@ -283,9 +291,6 @@ export async function POST(request: NextRequest) {
 
     const {
       prompt,
-      file,
-      fileType,
-      fileName,
       conversationHistory,
       isDocumentRequest,
       documentType,
@@ -302,9 +307,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Check Usage Limits ──────────────────────────────────────────────────
-    // Don't double-count: if attachments array is provided, use its length.
-    // Only fall back to file field if no attachments array is present.
-    const totalAttachments = (bodyAttachments?.length || 0) || (file ? 1 : 0);
+    const totalAttachments = bodyAttachments?.length || 0;
     if (totalAttachments > 0) {
       // Check and increment attachment quota in one call (1 attachment = 1 use)
       const usageResult = await useFeature(userId, "file_uploads", totalAttachments);
@@ -330,7 +333,7 @@ export async function POST(request: NextRequest) {
 
     // Only count as chat message if it's NOT canvas, NOT outreach, and NOT just a file upload
     const isOutreach = isOutreachMessage(prompt || "", Array.isArray(conversationHistory) ? conversationHistory : []);
-    if (!isCanvasRequest && !isOutreach && !file) {
+    if (!isCanvasRequest && !isOutreach && !bodyAttachments?.length) {
       const usageResult = await useFeature(userId, "chat_messages");
       if (!usageResult.allowed) {
         return NextResponse.json({
@@ -351,7 +354,7 @@ export async function POST(request: NextRequest) {
     }
 
     const message = prompt || "";
-    if (!message && !file) {
+    if (!message && !bodyAttachments?.length) {
       return NextResponse.json({ error: "Message or file is required" }, { status: 400 });
     }
 
@@ -361,7 +364,7 @@ export async function POST(request: NextRequest) {
 
     // ── Determine mode ────────────────────────────────────────────────────
     // Pass full history so context-aware detection works (e.g. "yes send it" after outreach)
-    const useOutreachAgent = isOutreachMessage(message, fullHistory) && !file;
+    const useOutreachAgent = isOutreachMessage(message, fullHistory) && !bodyAttachments?.length;
 
     // ── OUTREACH / EMAIL AGENT MODE ───────────────────────────────────────
     if (useOutreachAgent) {
@@ -460,50 +463,81 @@ export async function POST(request: NextRequest) {
     let model = "mistral-large-latest";
     let documentContext = "";
 
-    if (file) {
-      const normalizedFileName = fileName?.toLowerCase() || "";
-      const isImage = fileType?.startsWith("image/");
-      const isPDF = fileType === "application/pdf";
-      const isDOCX = fileType?.includes("wordprocessingml") || normalizedFileName.endsWith(".docx");
-      const isDOC = fileType === "application/msword" || normalizedFileName.endsWith(".doc");
-      const isTextLike =
-        fileType?.startsWith("text/") ||
-        [
-          "application/json",
-          "application/xml",
-          "text/xml",
-          "application/javascript",
-          "text/javascript",
-          "application/x-javascript",
-        ].includes(fileType || "") ||
-        [".txt", ".md", ".markdown", ".html", ".htm", ".css", ".js", ".ts", ".tsx", ".jsx", ".json", ".xml", ".csv"].some(ext =>
-          normalizedFileName.endsWith(ext)
-        );
-      const base64Data = file.includes(",") ? file : `data:${fileType};base64,${file}`;
+    if (bodyAttachments?.length > 0) {
+      const imageParts: any[] = [];
+      const documentTexts: string[] = [];
 
-      if (isImage) {
+      for (const attachment of bodyAttachments) {
+        const attName: string = attachment.name || "";
+        const attType: string = attachment.type || "";
+        const attUrl: string = attachment.url || "";
+        if (!attUrl) continue;
+
+        fileUrlsToDelete.push(attUrl);
+
+        const normalizedFileName = attName.toLowerCase();
+        const isImage = attType.startsWith("image/");
+        const isPDF = attType === "application/pdf";
+        const isDOCX = attType.includes("wordprocessingml") || normalizedFileName.endsWith(".docx");
+        const isDOC = attType === "application/msword" || normalizedFileName.endsWith(".doc");
+        const isTextLike =
+          attType.startsWith("text/") ||
+          [
+            "application/json",
+            "application/xml",
+            "text/xml",
+            "application/javascript",
+            "text/javascript",
+            "application/x-javascript",
+          ].includes(attType) ||
+          [".txt", ".md", ".markdown", ".html", ".htm", ".css", ".js", ".ts", ".tsx", ".jsx", ".json", ".xml", ".csv"].some(ext =>
+            normalizedFileName.endsWith(ext)
+          );
+
+        try {
+          const fileBuffer = await fetchFromR2(attUrl);
+          const base64Data = `data:${attType};base64,${fileBuffer.toString("base64")}`;
+
+          if (isImage) {
+            const imageData = base64Data.split(",")[1];
+            imageParts.push({
+              type: "image" as const,
+              image: Buffer.from(imageData, "base64"),
+              mimeType: attType || "image/png",
+            });
+          } else if (isPDF) {
+            let text = await extractTextFromPDF(base64Data);
+            text = truncateText(text, 120000); // ~30k tokens cap
+            documentTexts.push(`[Document: ${attName}]\n\n${text}`);
+          } else if (isDOCX || isDOC) {
+            let text = await extractTextFromDOCX(base64Data);
+            text = truncateText(text, 120000);
+            documentTexts.push(`[Document: ${attName}]\n\n${text}`);
+          } else if (isTextLike) {
+            let text = await extractTextFromPlainFile(base64Data);
+            text = truncateText(text, 120000);
+            documentTexts.push(`[File: ${attName}]\n[Type: ${attType || "text/plain"}]\n\n${text}`);
+          }
+        } catch (err: unknown) {
+          console.error(`Error processing attachment ${attName}:`, err);
+          documentTexts.push(`[File: ${attName}]\n\nError: Could not process file.`);
+        }
+      }
+
+      if (imageParts.length > 0) {
         model = "pixtral-large-latest";
-        const imageData = base64Data.includes(",") ? base64Data.split(",")[1] : base64Data;
         userMessageContent = [
           {
             type: "text" as const,
-            text: message || `Analyze this image file: ${fileName || "uploaded image"}`,
+            text: message || `Analyze the uploaded file(s)`,
           },
-          {
-            type: "image" as const,
-            image: Buffer.from(imageData, "base64"),
-            mimeType: fileType || "image/png",
-          },
+          ...imageParts,
         ];
-      } else if (isPDF) {
-        documentContext = await extractTextFromPDF(base64Data);
-        userMessageContent = `[Document: ${fileName}]\n\n${documentContext}\n\nUser Question: ${message || "Analyze this document."}`;
-      } else if (isDOCX || isDOC) {
-        documentContext = await extractTextFromDOCX(base64Data);
-        userMessageContent = `[Document: ${fileName}]\n\n${documentContext}\n\nUser Question: ${message || "Analyze this document."}`;
-      } else if (isTextLike) {
-        documentContext = await extractTextFromPlainFile(base64Data);
-        userMessageContent = `[File: ${fileName}]\n[Type: ${fileType || "text/plain"}]\n\n${documentContext}\n\nUser Question: ${message || "Analyze this file."}`;
+        if (documentTexts.length > 0) {
+          userMessageContent[0].text += "\n\n" + documentTexts.join("\n\n---\n\n");
+        }
+      } else if (documentTexts.length > 0) {
+        userMessageContent = documentTexts.join("\n\n---\n\n") + `\n\nUser Question: ${message || "Analyze these documents."}`;
       }
     }
 
@@ -521,7 +555,7 @@ export async function POST(request: NextRequest) {
 
       // Smart web search — skip for short conversational messages or file uploads
       let sourcesForFrontend: { title: string; url: string; favicon: string }[] = [];
-      if (message && message.length > 10 && !file) {
+      if (message && message.length > 10 && !bodyAttachments?.length) {
         const lower = message.toLowerCase().trim();
         const isConversational = /^(hi|hey|hello|thanks|thank you|ok|okay|yes|no|sure|got it|great|cool|nice|bye|goodbye|please|sorry|hmm|hm|yep|nope|yeah|nah|alright|right|exactly|correct|agreed|understood|lol|haha|wow)\b/i.test(lower);
         // Force search on any date/time/recent/current query regardless of length
@@ -687,12 +721,21 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
             async start(controller) {
               controller.enqueue(sourcesChunk);
               const reader = originalBody.getReader();
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                controller.enqueue(value);
+              try {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  controller.enqueue(value);
+                }
+              } catch (e) {
+                console.error("Stream read error:", e);
+              } finally {
+                controller.close();
+                reader.releaseLock();
+                for (const url of fileUrlsToDelete) {
+                  try { await deleteFromR2(url); } catch (e) { console.error("R2 delete error:", e); }
+                }
               }
-              controller.close();
             },
           });
           return new Response(combinedStream, {
@@ -702,7 +745,7 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
       }
 
       // ── Auto-save research session for prediction engine ────────────────
-      if (message && message.length > 15 && !file) {
+      if (message && message.length > 15 && !bodyAttachments?.length) {
         const lower = message.toLowerCase().trim();
         const isConversational = /^(hi|hey|hello|thanks|thank you|ok|okay|yes|no|sure|got it|great|cool|nice|bye|goodbye|please|sorry|hmm|yep|yeah|alright)\b/i.test(lower);
         if (!isConversational) {
@@ -751,11 +794,43 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
         }
       }
 
-      return streamResult.toTextStreamResponse();
+      const streamResponse = streamResult.toTextStreamResponse();
+      const originalBody = streamResponse.body;
+      if (!originalBody || fileUrlsToDelete.length === 0) return streamResponse;
+
+      const pipedStream = new ReadableStream({
+        async start(controller) {
+          const reader = originalBody.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              controller.enqueue(value);
+            }
+          } catch (e) {
+            console.error("Stream read error:", e);
+          } finally {
+            controller.close();
+            reader.releaseLock();
+            // Delete uploaded files from R2 after stream completes
+            for (const url of fileUrlsToDelete) {
+              try { await deleteFromR2(url); } catch (e) { console.error("R2 delete error:", e); }
+            }
+          }
+        },
+      });
+
+      return new Response(pipedStream, {
+        headers: streamResponse.headers,
+      });
 
   } catch (error: unknown) {
     console.error("Unified Assist API error:", error);
     const msg = error instanceof Error ? error.message : "Failed to process request";
+    // Clean up any uploaded files on error
+    for (const url of fileUrlsToDelete) {
+      try { await deleteFromR2(url); } catch (e) { console.error("R2 delete error:", e); }
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

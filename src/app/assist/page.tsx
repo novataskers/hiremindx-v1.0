@@ -50,7 +50,7 @@ interface UploadedFile {
   name: string;
   type: string;
   size: number;
-  base64: string;
+  url: string;
 }
 
 interface ChatSession {
@@ -612,7 +612,6 @@ export default function AssistPage() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setIsUploading(true);
-    const newFiles: UploadedFile[] = [];
     const allowedTypes = new Set([
       'application/pdf',
       'application/msword',
@@ -639,53 +638,70 @@ export default function AssistPage() {
       const lowerName = file.name.toLowerCase();
       const isAllowed = allowedTypes.has(file.type) || allowedExtensions.some(ext => lowerName.endsWith(ext));
       if (!isAllowed) { toast.error(`File type not supported: ${file.name}`); continue; }
-      if (file.size > 4.5 * 1024 * 1024) { toast.error(`File too large (max 4.5MB): ${file.name}`); continue; }
+      if (file.size > 20 * 1024 * 1024) { toast.error(`File too large (max 20MB): ${file.name}`); continue; }
       try {
-        const base64 = await fileToBase64(file);
-        newFiles.push({ name: file.name, type: file.type, size: file.size, base64 });
-      } catch { toast.error(`Failed to read file: ${file.name}`); }
+        let uploadFile = file;
+        let finalType = file.type;
+        if (file.type.startsWith('image/') && !file.type.includes('svg')) {
+          const blob = await resizeImage(file);
+          uploadFile = new File([blob], file.name, { type: 'image/jpeg' });
+          finalType = 'image/jpeg';
+        }
+        const formData = new FormData();
+        formData.append('file', uploadFile);
+        const response = await fetch('/api/assist/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Upload failed: ${response.status}`);
+        }
+        const data = await response.json();
+        setUploadedFiles(prev => [...prev, { name: data.name, type: finalType, size: data.size, url: data.url }]);
+      } catch (err: any) {
+        toast.error(err.message || `Failed to upload file: ${file.name}`);
+      }
     }
-    setUploadedFiles(prev => [...prev, ...newFiles]);
     setIsUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
+  const resizeImage = (file: File): Promise<Blob> => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = () => {
       const result = reader.result as string;
-      if (file.type.startsWith('image/') && !file.type.includes('svg')) {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-          const maxSize = 1024;
-          if (width > maxSize || height > maxSize) {
-            if (width > height) {
-              height = Math.round((height * maxSize) / width);
-              width = maxSize;
-            } else {
-              width = Math.round((width * maxSize) / height);
-              height = maxSize;
-            }
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', 0.8));
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxSize = 1024;
+        if (width > maxSize || height > maxSize) {
+          if (width > height) {
+            height = Math.round((height * maxSize) / width);
+            width = maxSize;
           } else {
-            resolve(result);
+            width = Math.round((width * maxSize) / height);
+            height = maxSize;
           }
-        };
-        img.onerror = () => resolve(result);
-        img.src = result;
-      } else {
-        resolve(result);
-      }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob((blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error('Failed to create blob from canvas'));
+          }, 'image/jpeg', 0.8);
+        } else {
+          reject(new Error('Failed to get canvas context'));
+        }
+      };
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = result;
     };
     reader.onerror = error => reject(error);
   });
@@ -871,7 +887,7 @@ export default function AssistPage() {
             .filter(m => m.id !== "initial" && !m.isStreaming && m.content.trim() !== "")
             .map(m => ({ role: m.role, content: m.content }));
 
-        const attachments = currentFiles.map(f => ({ name: f.name, type: f.type, base64: f.base64 }));
+        const attachments = currentFiles.map(f => ({ name: f.name, type: f.type, url: f.url }));
 
         const payload: Record<string, any> = {
           prompt: userMessage || (currentFiles.length > 0 ? 'Please analyze the uploaded file(s)' : ''),
@@ -887,11 +903,7 @@ export default function AssistPage() {
           payload.existingCanvasCode = canvasCode;
         }
 
-        if (currentFiles.length > 0) {
-          payload.file = currentFiles[0].base64;
-          payload.fileName = currentFiles[0].name;
-          payload.fileType = currentFiles[0].type;
-        }
+        // Files are sent via attachments only — no duplicate payload fields
 
         const controller = new AbortController();
         abortControllerRef.current = controller;
@@ -921,7 +933,7 @@ export default function AssistPage() {
             window.dispatchEvent(new CustomEvent("usage-limit-reached", { detail: { message: errorData.error, resetAt: usage.resetAt || null, isLifetime: usage.isLifetime !== undefined ? usage.isLifetime : true } }));
             throw new Error("LIMIT_REACHED_SILENT");
           }
-          if (response.status === 413) throw new Error('File too large. Please use a smaller file.');
+          // R2 upload handles size limits; 413 no longer applicable here
           throw new Error(errorData.error || `Error ${response.status}`);
         }
 
