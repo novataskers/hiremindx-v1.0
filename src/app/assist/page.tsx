@@ -468,6 +468,7 @@ export default function AssistPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
+  const [historySearch, setHistorySearch] = useState("");
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [savedMessageIds, setSavedMessageIds] = useState<Set<string>>(new Set());
@@ -497,7 +498,9 @@ export default function AssistPage() {
   const savedMessageIdsRef = useRef<Set<string>>(new Set());
   const sessionCreationPromiseRef = useRef<Promise<number | null> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const uploadedFilesRef = useRef<UploadedFile[]>([]);
 
+  useEffect(() => { uploadedFilesRef.current = uploadedFiles; }, [uploadedFiles]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
   useEffect(() => { savedMessageIdsRef.current = savedMessageIds; }, [savedMessageIds]);
@@ -706,7 +709,22 @@ export default function AssistPage() {
     reader.onerror = error => reject(error);
   });
 
-  const removeFile = (index: number) => setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+  const deleteR2Files = (urls: string[]) => {
+    if (urls.length === 0) return;
+    fetch('/api/assist/upload/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls }),
+    }).catch(() => {});
+  };
+
+  const removeFile = (index: number) => {
+    setUploadedFiles(prev => {
+      const removed = prev[index];
+      if (removed?.url) deleteR2Files([removed.url]);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
 
   const getFileIcon = (type: string) => type.startsWith('image/') ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />;
 
@@ -719,6 +737,18 @@ export default function AssistPage() {
   useEffect(() => {
     if (!isPending && !checkingDevSession && !session?.user && !devSession) router.push("/");
   }, [session, isPending, router, devSession, checkingDevSession]);
+
+  useEffect(() => {
+    const cleanup = () => {
+      const pending = uploadedFilesRef.current;
+      if (pending.length > 0) {
+        const urls = pending.map(f => f.url);
+        navigator.sendBeacon('/api/assist/upload/delete', JSON.stringify({ urls }));
+      }
+    };
+    window.addEventListener('beforeunload', cleanup);
+    return () => window.removeEventListener('beforeunload', cleanup);
+  }, []);
 
   useEffect(() => {
     if (autoScroll) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -807,6 +837,7 @@ export default function AssistPage() {
           return next;
         });
         setInput("");
+        if (currentFiles.length > 0) deleteR2Files(currentFiles.map(f => f.url));
         setUploadedFiles([]);
         setAutoScroll(true);
         setLastMessageSent(null);
@@ -831,6 +862,7 @@ export default function AssistPage() {
           return next;
         });
         setInput("");
+        if (currentFiles.length > 0) deleteR2Files(currentFiles.map(f => f.url));
         setUploadedFiles([]);
         setAutoScroll(true);
         setLastMessageSent(null);
@@ -856,6 +888,7 @@ export default function AssistPage() {
           return next;
         });
         setInput("");
+        if (currentFiles.length > 0) deleteR2Files(currentFiles.map(f => f.url));
         setUploadedFiles([]);
         setAutoScroll(true);
         setLastMessageSent(null);
@@ -1352,6 +1385,11 @@ export default function AssistPage() {
     if (isStartingNewChatRef.current) return;
     isStartingNewChatRef.current = true;
     setIsStartingNewChat(true);
+    // Clean up any pending R2 uploads
+    if (uploadedFiles.length > 0) {
+      deleteR2Files(uploadedFiles.map(f => f.url));
+      setUploadedFiles([]);
+    }
     // Reset all session tracking refs immediately
     currentSessionIdRef.current = null;
     savedMessageIdsRef.current = new Set();
@@ -1362,6 +1400,7 @@ export default function AssistPage() {
     setCurrentSessionId(null);
     setSavedMessageIds(new Set());
     setShowHistory(false);
+    setHistorySearch("");
     // Reset agent state on server so next conversation starts fresh
     try {
       await fetch('/api/assist/chat', {
@@ -1411,9 +1450,21 @@ export default function AssistPage() {
               onClick={() => setShowHistory(false)}
             />
             <div className={`relative w-72 max-w-[85vw] md:w-64 ${isDark ? 'bg-black border-zinc-800' : 'bg-white/40 backdrop-blur-xl border-white/40'} border-r h-full flex flex-col z-10`}>
-              <div className={`p-3 ${isDark ? 'border-zinc-800' : 'border-black/5'} border-b flex items-center justify-between`}>
-                <h2 className="text-sm font-semibold">Chat History</h2>
-                <Button variant="ghost" size="icon" className={`h-8 w-8 md:hidden ${isDark ? 'text-zinc-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'}`} onClick={() => setShowHistory(false)}>
+              <div className={`p-3 ${isDark ? 'border-zinc-800' : 'border-black/5'} border-b flex items-center gap-2`}>
+                <Search className="w-3.5 h-3.5 text-zinc-400 flex-shrink-0" />
+                <input
+                  type="text"
+                  placeholder="Search chats..."
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  className={`flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-500 ${isDark ? 'text-white' : 'text-gray-900'}`}
+                />
+                {historySearch && (
+                  <button onClick={() => setHistorySearch("")} className="p-0.5">
+                    <X className={`w-3.5 h-3.5 ${isDark ? 'text-zinc-500 hover:text-zinc-300' : 'text-gray-400 hover:text-gray-700'}`} />
+                  </button>
+                )}
+                <Button variant="ghost" size="icon" className={`h-8 w-8 md:hidden flex-shrink-0 ${isDark ? 'text-zinc-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'}`} onClick={() => { setShowHistory(false); setHistorySearch(""); }}>
                   <X className="w-4 h-4" />
                 </Button>
               </div>
@@ -1428,10 +1479,17 @@ export default function AssistPage() {
                 </Button>
               </div>
               <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                {chatHistory.length === 0 ? (
-                  <p className={`text-xs ${isDark ? 'text-zinc-500' : 'text-gray-500'} text-center py-8`}>No chat history yet</p>
-                ) : (
-                  chatHistory.map((chatSession) => (
+                {(() => {
+                  const filteredHistory = chatHistory.filter(s =>
+                    s.title.toLowerCase().includes(historySearch.toLowerCase())
+                  );
+                  if (chatHistory.length === 0) return (
+                    <p className={`text-xs ${isDark ? 'text-zinc-500' : 'text-gray-500'} text-center py-8`}>No chat history yet</p>
+                  );
+                  if (filteredHistory.length === 0) return (
+                    <p className={`text-xs ${isDark ? 'text-zinc-500' : 'text-gray-500'} text-center py-8`}>No chats found</p>
+                  );
+                  return filteredHistory.map((chatSession) => (
                     <div
                       key={chatSession.id}
                       onClick={() => loadSession(chatSession.id)}
@@ -1454,8 +1512,8 @@ export default function AssistPage() {
                         <Trash2 className="w-3.5 h-3.5" />
                       </Button>
                     </div>
-                  ))
-                )}
+                  ));
+                })()}
               </div>
             </div>
           </div>

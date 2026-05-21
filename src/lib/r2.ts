@@ -3,8 +3,7 @@
  * S3-compatible wrapper for upload, fetch, and delete operations.
  */
 
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 const endpoint = process.env.CLOUDFLARE_R2_ENDPOINT!;
 const accessKeyId = process.env.CLOUDFLARE_R2_ACCESS_KEY_ID!;
