@@ -204,12 +204,13 @@ export async function createGoogleCalendarEvent(
   endDateTime: string,
   description?: string,
   location?: string,
-  attendees?: string[]
+  attendees?: string[],
+  timeZone?: string
 ): Promise<{ success: boolean; eventId?: string; htmlLink?: string; error?: string }> {
   const eventBody: any = {
     summary,
-    start: { dateTime: startDateTime },
-    end: { dateTime: endDateTime },
+    start: { dateTime: startDateTime, timeZone: timeZone || undefined },
+    end: { dateTime: endDateTime, timeZone: timeZone || undefined },
   };
   if (description) eventBody.description = description;
   if (location) eventBody.location = location;
@@ -274,6 +275,74 @@ export async function deleteGoogleCalendarEvent(
       return { success: false, error: `Delete failed: ${res.status}` };
     }
     return { success: true };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+// ─── Google Tasks ────────────────────────────────────────────────────────────
+
+const TASKS_BASE = "https://tasks.googleapis.com/tasks/v1";
+
+export async function listGoogleTasks(
+  token: string,
+  maxResults = 20
+): Promise<{ id: string; title: string; status: string; due?: string; notes?: string }[]> {
+  // Get the default task list first
+  const listsRes = await fetch(`${TASKS_BASE}/users/@me/lists`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!listsRes.ok) throw new Error(`Tasks lists failed: ${listsRes.status}`);
+  const listsData = await listsRes.json();
+  const defaultList = listsData.items?.[0]?.id;
+  if (!defaultList) return [];
+
+  const res = await fetch(`${TASKS_BASE}/lists/${defaultList}/tasks?maxResults=${maxResults}&showCompleted=false`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Tasks list failed: ${res.status}`);
+  const data = await res.json();
+
+  return (data.items || []).filter((t: any) => t.title).map((t: any) => ({
+    id: t.id,
+    title: t.title,
+    status: t.status || "needsAction",
+    due: t.due,
+    notes: t.notes?.substring(0, 200),
+  }));
+}
+
+export async function createGoogleTask(
+  token: string,
+  title: string,
+  notes?: string,
+  due?: string
+): Promise<{ success: boolean; taskId?: string; error?: string }> {
+  // Get the default task list
+  const listsRes = await fetch(`${TASKS_BASE}/users/@me/lists`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!listsRes.ok) return { success: false, error: `Tasks lists failed: ${listsRes.status}` };
+  const listsData = await listsRes.json();
+  const defaultList = listsData.items?.[0]?.id;
+  if (!defaultList) return { success: false, error: "No task list found" };
+
+  const taskBody: any = { title };
+  if (notes) taskBody.notes = notes;
+  if (due) taskBody.due = due; // RFC 3339 date (e.g. 2026-05-24T00:00:00.000Z)
+
+  try {
+    const res = await fetch(`${TASKS_BASE}/lists/${defaultList}/tasks`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(taskBody),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      return { success: false, error: JSON.stringify(err) };
+    }
+    const result = await res.json();
+    return { success: true, taskId: result.id };
   } catch (e) {
     return { success: false, error: String(e) };
   }

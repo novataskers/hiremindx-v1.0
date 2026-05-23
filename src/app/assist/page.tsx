@@ -930,6 +930,7 @@ export default function AssistPage() {
           documentType: documentRequest.type,
           attachments: attachments.length > 0 ? attachments : undefined,
           isCanvasRequest: shouldUseCanvas,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         };
 
         // Pass existing canvas code when editing so the AI has the full code to modify

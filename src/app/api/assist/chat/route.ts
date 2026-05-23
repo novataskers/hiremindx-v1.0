@@ -298,7 +298,10 @@ export async function POST(request: NextRequest) {
       reset,
       isCanvasRequest,
       existingCanvasCode,
+      timezone,
     } = body;
+
+    const userTimezone = timezone || "UTC";
 
     // ── Reset state (new chat started) ──────────────────────────────────────
     if (reset) {
@@ -561,7 +564,8 @@ export async function POST(request: NextRequest) {
         const hasEmailIntent = /(emails?|e-?mails?|inbox|mails?\b|unread|message.?from|reply.?from|got.{0,10}reply|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail))/i.test(lower);
         const hasCalendarIntent = /(cal[ae]n[dae]+[ae]r|calender|claendar|calandar|schedule[ds]?|sc?hedule|meetings?|mee?tings?|appointments?|appoint?ments?|events?\b|what.{0,15}(on|planned|happening|have)|busy|free\b|availab|today.{0,5}(schedule|cal|plan)|tomorrow|this week|next week|book.{0,10}(meeting|event)|reschedule|add.{0,10}(event|meeting|cal|appointment)|create.{0,10}(event|meeting)|set.{0,10}(reminder|meeting)|cancel.{0,10}(event|meeting)|what.{0,15}my.{0,10}(cal|schedule|agenda))/i.test(lower);
         const hasContactsIntent = /(contacts?\b|phone.?number|email.?address|look.?up.{0,10}(contact|person|number)|find.{0,10}(contact|number|phone)|directory)/i.test(lower) && !hasEmailIntent;
-        if (hasEmailIntent || hasCalendarIntent || hasContactsIntent) {
+        const hasTaskIntent = /(tasks?|to.?dos?|todo|reminders?|add.{0,10}(task|todo|to-do|reminder)|create.{0,10}(task|todo|to-do)|my.{0,5}(tasks|to.?dos|todos)|show.{0,10}(tasks|to.?dos)|list.{0,10}(tasks|to.?dos)|pending.{0,5}(tasks|to.?dos))/i.test(lower) && !hasCalendarIntent;
+        if (hasEmailIntent || hasCalendarIntent || hasContactsIntent || hasTaskIntent) {
           connectorIntentDetected = true;
         }
       }
@@ -722,13 +726,15 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
         const isEmailIntent = /(emails?|e-?mails?|inbox|mails?\b|unread|message.?from|reply.?from|got.{0,10}reply|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail))/i.test(lower);
         const isCalendarIntent = /(cal[ae]n[dae]+[ae]r|calender|claendar|calandar|schedule[ds]?|sc?hedule|meetings?|mee?tings?|appointments?|appoint?ments?|events?\b|what.{0,15}(on|planned|happening|have)|busy|free\b|availab|today.{0,5}(schedule|cal|plan)|tomorrow|this week|next week|book.{0,10}(meeting|event)|reschedule|add.{0,10}(event|meeting|cal|appointment)|create.{0,10}(event|meeting)|set.{0,10}(reminder|meeting)|cancel.{0,10}(event|meeting)|what.{0,15}my.{0,10}(cal|schedule|agenda))/i.test(lower);
         const isContactsIntent = /(contacts?\b|phone.?number|email.?address|look.?up.{0,10}(contact|person|number)|find.{0,10}(contact|number|phone)|directory)/i.test(lower) && !isEmailIntent;
+        const isTaskIntent = /(tasks?|to.?dos?|todo|reminders?|add.{0,10}(task|todo|to-do|reminder)|create.{0,10}(task|todo|to-do)|my.{0,5}(tasks|to.?dos|todos)|show.{0,10}(tasks|to.?dos)|list.{0,10}(tasks|to.?dos)|pending.{0,5}(tasks|to.?dos))/i.test(lower) && !isCalendarIntent;
 
         // Detect write vs read intent
         const isWriteCalendar = /(add|create|book|set|schedule|put|make|insert).{0,15}(event|meeting|appointment|calendar|reminder)/i.test(lower) || /(add.{0,5}to.{0,10}calendar|book.{0,5}a?.{0,5}meeting|schedule.{0,5}a?.{0,5}meeting)/i.test(lower);
         const isCancelCalendar = /(cancel|delete|remove).{0,15}(event|meeting|appointment)/i.test(lower);
         const isSendEmail = /(send|compose|write|draft).{0,15}(email|mail|message|reply)/i.test(lower);
+        const isWriteTask = /(add|create|make|set).{0,15}(task|todo|to-do|reminder)/i.test(lower);
 
-        console.log(`[Connector] Intent — email:${isEmailIntent} cal:${isCalendarIntent} contacts:${isContactsIntent} writeCalendar:${isWriteCalendar} cancelCal:${isCancelCalendar} sendEmail:${isSendEmail} msg:"${message.substring(0, 80)}"`);
+        console.log(`[Connector] Intent — email:${isEmailIntent} cal:${isCalendarIntent} contacts:${isContactsIntent} task:${isTaskIntent} writeCalendar:${isWriteCalendar} cancelCal:${isCancelCalendar} sendEmail:${isSendEmail} writeTask:${isWriteTask} msg:"${message.substring(0, 80)}"`);
 
         try {
           const connectorToken = await getEmailToken(userId);
@@ -853,10 +859,11 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
               try {
                 const extractModel = createMistral({ apiKey: process.env.MISTRAL_API_KEY_1 || process.env.MISTRAL_API_KEY || "" });
                 const now = new Date();
+                const localTimeStr = now.toLocaleString("en-US", { timeZone: userTimezone, dateStyle: "full", timeStyle: "short" });
                 const extraction = await generateText({
                   model: extractModel("mistral-small-latest"),
-                  system: `You extract calendar event parameters from natural language. Return ONLY valid JSON, no markdown. Current date/time: ${now.toISOString()}. The user's timezone context: the server time is UTC.`,
-                  prompt: `Extract from this message: "${message}"\n\nReturn JSON: {"summary":"event title","startDateTime":"ISO8601","endDateTime":"ISO8601","location":"","description":"","attendees":[]}\n\nRules:\n- summary: short descriptive title\n- If time is ambiguous (e.g. "8pm"), assume today if it hasn't passed, tomorrow if it has\n- If no end time, default to 1 hour after start\n- attendees: array of email strings, empty if none mentioned\n- location/description: empty string if not mentioned\n- ALL datetimes must be valid ISO 8601 format`,
+                  system: `You extract calendar event parameters from natural language. Return ONLY valid JSON, no markdown. Current date/time in user's timezone (${userTimezone}): ${localTimeStr}. Current UTC: ${now.toISOString()}.`,
+                  prompt: `Extract from this message: "${message}"\n\nReturn JSON: {"summary":"event title","startDateTime":"ISO8601 with offset","endDateTime":"ISO8601 with offset","location":"","description":"","attendees":[]}\n\nRules:\n- summary: short descriptive title\n- The user is in timezone ${userTimezone}. ALL times must be in their local timezone with correct offset (e.g. for Asia/Dhaka use +06:00)\n- If time is ambiguous (e.g. "8pm"), assume today if it hasn't passed in ${userTimezone}, tomorrow if it has\n- If no end time, default to 1 hour after start\n- attendees: array of email strings, empty if none mentioned\n- location/description: empty string if not mentioned\n- ALL datetimes must include timezone offset (e.g. 2026-05-24T20:00:00+06:00). NEVER use Z suffix.`,
                   maxOutputTokens: 500,
                 });
                 let eventParams: { summary: string; startDateTime: string; endDateTime: string; location?: string; description?: string; attendees?: string[] };
@@ -872,7 +879,7 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
                   console.log(`[Connector] Creating calendar event: ${eventParams.summary} at ${eventParams.startDateTime}`);
                   if (provider === "google") {
                     const { createGoogleCalendarEvent } = await import("@/lib/google-tools");
-                    const result = await createGoogleCalendarEvent(accessToken, eventParams.summary, eventParams.startDateTime, eventParams.endDateTime, eventParams.description, eventParams.location, eventParams.attendees);
+                    const result = await createGoogleCalendarEvent(accessToken, eventParams.summary, eventParams.startDateTime, eventParams.endDateTime, eventParams.description, eventParams.location, eventParams.attendees, userTimezone);
                     console.log(`[Connector] Google Calendar create result:`, result);
                     connectorContext += result.success
                       ? `\n\n[CALENDAR_ACTION — Successfully created event in Google Calendar]\nTITLE: ${eventParams.summary}\nSTART: ${eventParams.startDateTime}\nEND: ${eventParams.endDateTime}${eventParams.location ? `\nLOCATION: ${eventParams.location}` : ""}${result.htmlLink ? `\nLINK: ${result.htmlLink}` : ""}\n[Event has been added to the calendar.]\n`
@@ -967,6 +974,61 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
               } catch (contactErr) {
                 console.error(`[Connector] Contacts error:`, contactErr);
                 connectorContext += `\n\n[CONTACTS_ERROR — Failed to access contacts: ${contactErr instanceof Error ? contactErr.message : "unknown"}. The user may need to reconnect their ${providerLabel} account.]\n`;
+              }
+            }
+
+            // ── TASKS: Create or List ──
+            if (isTaskIntent && provider === "google") {
+              if (isWriteTask) {
+                connectorStatusText = "Adding your task...";
+                try {
+                  const extractModel = createMistral({ apiKey: process.env.MISTRAL_API_KEY_1 || process.env.MISTRAL_API_KEY || "" });
+                  const now = new Date();
+                  const localTimeStr = now.toLocaleString("en-US", { timeZone: userTimezone, dateStyle: "full", timeStyle: "short" });
+                  const extraction = await generateText({
+                    model: extractModel("mistral-small-latest"),
+                    system: `You extract task parameters from natural language. Return ONLY valid JSON, no markdown. Current date in user's timezone (${userTimezone}): ${localTimeStr}.`,
+                    prompt: `Extract from this message: "${message}"\n\nReturn JSON: {"title":"task title","notes":"optional details","due":"YYYY-MM-DD or empty string"}\n\nRules:\n- title: short actionable task description\n- notes: any extra context, empty string if none\n- due: date string in YYYY-MM-DD format if mentioned, empty string if no due date\n- "tomorrow" = next day, "today" = today's date in ${userTimezone}`,
+                    maxOutputTokens: 300,
+                  });
+                  let taskParams: { title: string; notes?: string; due?: string };
+                  try {
+                    const cleaned = extraction.text.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
+                    taskParams = JSON.parse(cleaned);
+                  } catch {
+                    taskParams = { title: "", notes: "", due: "" };
+                  }
+
+                  if (taskParams.title) {
+                    const { createGoogleTask } = await import("@/lib/google-tools");
+                    const dueISO = taskParams.due ? `${taskParams.due}T00:00:00.000Z` : undefined;
+                    const result = await createGoogleTask(accessToken, taskParams.title, taskParams.notes || undefined, dueISO);
+                    console.log(`[Connector] Google Tasks create result:`, result);
+                    connectorContext += result.success
+                      ? `\n\n[TASK_ACTION — Successfully created task in Google Tasks]\nTITLE: ${taskParams.title}${taskParams.due ? `\nDUE: ${taskParams.due}` : ""}${taskParams.notes ? `\nNOTES: ${taskParams.notes}` : ""}\n[Task has been added to your to-do list.]\n`
+                      : `\n\n[TASK_ACTION — Failed to create task: ${result.error}. The user may need to sign out and sign back in to grant Tasks permission.]\n`;
+                  } else {
+                    connectorContext += `\n\n[TASK_ACTION — Could not determine task details. Please specify what the task is.]\n`;
+                  }
+                } catch (taskErr) {
+                  console.error(`[Connector] Task create error:`, taskErr);
+                  connectorContext += `\n\n[TASK_ACTION — Error: ${taskErr instanceof Error ? taskErr.message : "unknown"}]\n`;
+                }
+              } else {
+                connectorStatusText = "Checking your tasks...";
+                try {
+                  const { listGoogleTasks } = await import("@/lib/google-tools");
+                  const tasks = await listGoogleTasks(accessToken, 20);
+                  console.log(`[Connector] Google Tasks returned ${tasks.length} tasks`);
+                  connectorContext += tasks.length > 0
+                    ? `\n\n[TASKS_RESULTS — from user's Google Tasks]\n` +
+                      tasks.map((t, i) => `${i + 1}. "${t.title}" | STATUS: ${t.status === "completed" ? "Done" : "Pending"}${t.due ? ` | DUE: ${t.due}` : ""}${t.notes ? ` | NOTES: ${t.notes}` : ""}`).join("\n") +
+                      `\n[END_TASKS_RESULTS]`
+                    : `\n\n[TASKS_RESULTS — No pending tasks found. The user's task list is empty.]\n`;
+                } catch (taskErr) {
+                  console.error(`[Connector] Tasks list error:`, taskErr);
+                  connectorContext += `\n\n[TASKS_ERROR — Failed to access tasks: ${taskErr instanceof Error ? taskErr.message : "unknown"}. The user may need to sign out and sign back in to grant Tasks permission.]\n`;
+                }
               }
             }
 
