@@ -33,6 +33,10 @@ export default function SignInModal({ isOpen, onClose, redirectTo = "/" }: SignI
           "email",
           "profile",
           "https://www.googleapis.com/auth/gmail.send",
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.modify",
+          "https://www.googleapis.com/auth/calendar",
+          "https://www.googleapis.com/auth/contacts.readonly",
         ],
       });
     } catch (error) {
@@ -56,6 +60,10 @@ export default function SignInModal({ isOpen, onClose, redirectTo = "/" }: SignI
           "email",
           "offline_access",
           "https://graph.microsoft.com/Mail.Send",
+          "https://graph.microsoft.com/Mail.Read",
+          "https://graph.microsoft.com/Mail.ReadWrite",
+          "https://graph.microsoft.com/Calendars.ReadWrite",
+          "https://graph.microsoft.com/Contacts.Read",
         ],
       });
     } catch (error) {
@@ -156,7 +164,7 @@ export default function SignInModal({ isOpen, onClose, redirectTo = "/" }: SignI
                 <div className="flex items-start gap-2">
                   <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-zinc-500" />
                   <p className="text-[11px] leading-relaxed text-zinc-500">
-                    Allow <strong className="text-zinc-400">&quot;Send email on your behalf&quot;</strong> to enable outreach features.
+                    Allow <strong className="text-zinc-400">email, calendar &amp; contacts</strong> access to enable AI-powered inbox search, scheduling, and outreach.
                   </p>
                 </div>
               </div>

@@ -17,6 +17,7 @@ import { fetchFromR2, deleteFromR2 } from "@/lib/r2";
 import { hiremindState, researchSessions } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getEmailToken, type EmailProvider } from "@/lib/google-auth";
+import { createAssistTools } from "@/lib/assist-tools";
 import {
   type ConversationState,
   type EmailAttachment,
@@ -593,6 +594,32 @@ export async function POST(request: NextRequest) {
       }
 
     let systemPrompt = RESEARCH_SYSTEM_PROMPT;
+
+    // ── Inject tool-use instructions when user has connected email/calendar ──
+    if (!isCanvasRequest && !isDocumentRequest) {
+      try {
+        const tokenCheck = await getEmailToken(userId);
+        if (tokenCheck) {
+          systemPrompt += `\n\nCONNECTED ACCOUNT TOOLS:
+The user has connected their ${tokenCheck.provider === "google" ? "Google" : "Microsoft"} account. You have access to these tools:
+- searchEmails: Search and read their emails. Use when they ask about inbox, messages, emails from someone, unread emails, etc.
+- searchCalendarEvents: Search their calendar. Use when they ask about schedule, meetings, appointments, availability, what's planned.
+- updateCalendarEvents: Create, update, or delete calendar events. Use when they want to schedule, reschedule, cancel, or modify meetings.
+- sendEmail: Send an email. Use when they explicitly ask to send/forward an email. ALWAYS confirm recipient and content before calling this tool.
+- draftReply: Draft a reply (saves as draft, does NOT send). Use when they want to prepare a reply to an email.
+- searchContacts: Search their contacts. Use when they ask to look up someone's contact info, email, or phone number.
+
+TOOL USAGE RULES:
+- Call tools ONLY when the user's intent clearly requires them. Normal chat doesn't need tools.
+- For calendar queries about "today", "tomorrow", "this week" etc., calculate the correct ISO 8601 date range using today's date from the context above.
+- When showing email results, format them nicely with sender, subject, date, and a preview.
+- When showing calendar events, format them with time, title, location, and attendees.
+- NEVER call sendEmail without the user explicitly confirming they want to send. Draft first, confirm, then send.
+- If a tool returns an error about expired tokens, tell the user to reconnect their account.`;
+        }
+      } catch {}
+    }
+
     if (isCanvasRequest) {
       systemPrompt += `\n\nCANVAS MODE ACTIVATED — ELITE CODING MODE.
 You are an expert full-stack developer. You MUST respond with COMPLETE, STANDALONE HTML that renders perfectly in an iframe. Your code quality must be EXCEPTIONAL — better than any other AI model.
@@ -702,11 +729,25 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
       }
     }
 
+      // ── Create AI tools if user has email/calendar connected ──────────
+      let assistTools: Record<string, any> | undefined;
+      if (!isCanvasRequest && !isDocumentRequest) {
+        try {
+          const emailToken = await getEmailToken(userId);
+          if (emailToken) {
+            assistTools = createAssistTools(emailToken.accessToken, emailToken.provider);
+          }
+        } catch (e) {
+          console.error("Error creating assist tools:", e);
+        }
+      }
+
       const streamResult = streamText({
         model: mistralStream(model),
         system: systemPrompt,
         messages: chatMessages,
         maxOutputTokens: isCanvasRequest ? 16000 : 4096,
+        ...(assistTools ? { tools: assistTools, maxSteps: 3 } : {}),
       });
 
       // If we have sources, prepend them as a special JSON header line before the stream

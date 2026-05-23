@@ -768,7 +768,7 @@ export default function AssistPage() {
       await authClient.signIn.social({
         provider: "google",
         callbackURL: "/assist",
-        scopes: ["openid", "email", "profile", "https://www.googleapis.com/auth/gmail.send"],
+        scopes: ["openid", "email", "profile", "https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/contacts.readonly"],
       });
     } catch {
       toast.error("Failed to connect Gmail. Please try again.");
@@ -780,7 +780,7 @@ export default function AssistPage() {
       await authClient.signIn.social({
         provider: "microsoft",
         callbackURL: "/assist",
-        scopes: ["openid", "profile", "email", "offline_access", "https://graph.microsoft.com/Mail.Send"],
+        scopes: ["openid", "profile", "email", "offline_access", "https://graph.microsoft.com/Mail.Send", "https://graph.microsoft.com/Mail.Read", "https://graph.microsoft.com/Mail.ReadWrite", "https://graph.microsoft.com/Calendars.ReadWrite", "https://graph.microsoft.com/Contacts.Read"],
       });
     } catch {
       toast.error("Failed to connect Outlook. Please try again.");

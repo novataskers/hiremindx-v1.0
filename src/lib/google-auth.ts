@@ -44,7 +44,7 @@ export async function refreshMicrosoftToken(refreshToken: string) {
         client_secret: process.env.MICROSOFT_CLIENT_SECRET!,
         refresh_token: refreshToken,
         grant_type: "refresh_token",
-        scope: "openid profile email offline_access https://graph.microsoft.com/Mail.Send",
+        scope: "openid profile email offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Contacts.Read",
       }),
     });
 
