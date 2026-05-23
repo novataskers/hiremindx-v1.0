@@ -34,6 +34,7 @@ interface Message {
   documentContext?: string;
   documentType?: 'pdf' | 'docx' | null;
   isStreaming?: boolean;
+  statusText?: string;
   options?: string[];
   sources?: Source[];
   isMarket?: boolean;
@@ -1016,6 +1017,8 @@ export default function AssistPage() {
             let accumulatedResponse = "";
             let parsedSources: Source[] = [];
             let sourcesExtracted = false;
+            let statusExtracted = false;
+            let connectorStatus = "";
 
             while (true) {
               if (controller.signal.aborted) break;
@@ -1024,6 +1027,18 @@ export default function AssistPage() {
               const chunk = decoder.decode(value, { stream: true });
               accumulatedResponse += chunk;
 
+              // Extract status header (sent before sources and AI text)
+              if (!statusExtracted && accumulatedResponse.includes('\x00STATUS:')) {
+                const statusIdx = accumulatedResponse.indexOf('\x00STATUS:');
+                const statusEnd = accumulatedResponse.indexOf('\x00\n', statusIdx + 1);
+                if (statusEnd !== -1) {
+                  connectorStatus = accumulatedResponse.slice(statusIdx + '\x00STATUS:'.length, statusEnd);
+                  accumulatedResponse = accumulatedResponse.slice(0, statusIdx) + accumulatedResponse.slice(statusEnd + 2);
+                  statusExtracted = true;
+                  setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, statusText: connectorStatus } : m));
+                }
+              }
+
               // Extract sources header from the first chunk (sent before any AI text)
               if (!sourcesExtracted && accumulatedResponse.includes('\x00SOURCES:')) {
                 const nullIdx = accumulatedResponse.indexOf('\x00SOURCES:');
@@ -1031,10 +1046,8 @@ export default function AssistPage() {
                 if (endIdx !== -1) {
                   const jsonStr = accumulatedResponse.slice(nullIdx + '\x00SOURCES:'.length, endIdx);
                   try { parsedSources = JSON.parse(jsonStr); } catch {}
-                  // Remove the sources header line from the text
-                  accumulatedResponse = accumulatedResponse.slice(endIdx + 2);
+                  accumulatedResponse = accumulatedResponse.slice(0, nullIdx) + accumulatedResponse.slice(endIdx + 2);
                   sourcesExtracted = true;
-                  // Do NOT set sources yet — wait until streaming finishes
                 }
               }
 
@@ -1054,7 +1067,7 @@ export default function AssistPage() {
 
               setMessages(prev => prev.map(m =>
                 m.id === assistantMsgId
-                  ? { ...m, content: accumulatedResponse, isStreaming: false, documentType: responseDocType, sources: parsedSources.length > 0 ? parsedSources : m.sources }
+                  ? { ...m, content: accumulatedResponse, isStreaming: false, statusText: undefined, documentType: responseDocType, sources: parsedSources.length > 0 ? parsedSources : m.sources }
                   : m
               ));
 
@@ -1679,6 +1692,13 @@ export default function AssistPage() {
                             </div>
                           ) : (
                             <>
+                              {/* Perplexity-style connector status indicator */}
+                              {message.isStreaming && message.statusText && !message.content && (
+                                <div className={`flex items-center gap-2 mb-3 px-3 py-2 rounded-lg text-xs font-medium ${isDark ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-blue-50 text-blue-600 border border-blue-200'}`}>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  {message.statusText}
+                                </div>
+                              )}
                               <div className={`prose max-w-none ${isDark ? 'prose-invert text-zinc-200' : 'text-gray-800'} ${message.isStreaming ? 'streaming-cursor' : ''}`}>
                                 <ReactMarkdown
                                   remarkPlugins={[remarkGfm]}

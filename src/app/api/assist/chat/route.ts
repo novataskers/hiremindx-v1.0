@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { createMistral } from "@ai-sdk/mistral";
-import { streamText } from "ai";
+import { streamText, generateText } from "ai";
 import { db } from "@/db";
 import mammoth from "mammoth";
 import { searchWithSerper, getDateContext } from "@/lib/search-utils";
@@ -553,19 +553,30 @@ export async function POST(request: NextRequest) {
     }
     chatMessages.push({ role: "user", content: userMessageContent });
 
-      // Smart web search — skip for short conversational messages or file uploads
+      // ── Detect connector intents FIRST (before web search) ──────────────
+      let connectorIntentDetected = false;
+      let connectorStatusText = ""; // Perplexity-style status for frontend
+      if (!isCanvasRequest && !isDocumentRequest && message) {
+        const lower = message.toLowerCase();
+        const hasEmailIntent = /(emails?|inbox|mails?\b|unread|message.?from|reply.?from|got.{0,10}reply|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail))/i.test(lower);
+        const hasCalendarIntent = /(calendar|schedule[ds]?|meetings?|appointments?|events?\b|what.{0,5}(on|planned|happening)|busy|free\b|availab|today.{0,5}(schedule|calendar|plan)|tomorrow|this week|next week|book.{0,10}meeting|reschedule|add.{0,10}(event|meeting|calendar|appointment)|create.{0,10}(event|meeting)|set.{0,10}(reminder|meeting)|cancel.{0,10}(event|meeting))/i.test(lower);
+        const hasContactsIntent = /(contacts?\b|phone.?number|email.?address|look.?up.{0,10}(contact|person|number)|find.{0,10}(contact|number|phone)|directory)/i.test(lower) && !hasEmailIntent;
+        if (hasEmailIntent || hasCalendarIntent || hasContactsIntent) {
+          connectorIntentDetected = true;
+        }
+      }
+
+      // Smart web search — skip for connector intents, short conversational messages, or file uploads
       let sourcesForFrontend: { title: string; url: string; favicon: string }[] = [];
-      if (message && message.length > 10 && !bodyAttachments?.length) {
+      if (!connectorIntentDetected && message && message.length > 10 && !bodyAttachments?.length) {
         const lower = message.toLowerCase().trim();
         const isConversational = /^(hi|hey|hello|thanks|thank you|ok|okay|yes|no|sure|got it|great|cool|nice|bye|goodbye|please|sorry|hmm|hm|yep|nope|yeah|nah|alright|right|exactly|correct|agreed|understood|lol|haha|wow)\b/i.test(lower);
-        // Force search on any date/time/recent/current query regardless of length
         const isTimeSensitiveQuery = /\b(today('s\s+date)?|current\s+(date|time|weather)|what\s+(date|day|time|month|year)|recent\s+(news|events|updates)|weather\s+(in|for|at)|latest\s+(news|price|update)|now\b|right\s+now)\b/i.test(lower);
         const wordCount = lower.split(/\s+/).length;
         if (!isConversational && (wordCount > 3 || lower.includes('?') || isTimeSensitiveQuery)) {
           try {
             const searchResults = await searchWithSerper(message, 6);
             if (searchResults?.length > 0) {
-              // Extract clean sources for the frontend
               sourcesForFrontend = searchResults.map((s: any) => {
                 let hostname = '';
                 try { hostname = new URL(s.link).hostname.replace('www.', ''); } catch {}
@@ -594,8 +605,7 @@ export async function POST(request: NextRequest) {
 
     let systemPrompt = RESEARCH_SYSTEM_PROMPT;
 
-    // ── Connector data instructions (injected when we fetch email/calendar/contacts data) ──
-    // This is added dynamically below if connector data is fetched
+    // ── Connector data is injected dynamically below if connector intent was detected ──
 
     if (isCanvasRequest) {
       systemPrompt += `\n\nCANVAS MODE ACTIVATED — ELITE CODING MODE.
@@ -706,143 +716,278 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
       }
     }
 
-      // ── Google/Microsoft Connector: detect intent → fetch data → inject context ──
-      if (!isCanvasRequest && !isDocumentRequest && message) {
+      // ── Google/Microsoft Connector: full autonomous email/calendar/contacts ──
+      if (connectorIntentDetected && message) {
         const lower = message.toLowerCase();
-        const isEmailIntent = /(emails?|inbox|mails?\b|unread|message.?from|reply.?from|got.{0,10}reply|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@)/i.test(lower);
-        const isCalendarIntent = /(calendar|schedule[ds]?|meetings?|appointments?|events?\b|what.{0,5}(on|planned|happening)|busy|free\b|availab|today.{0,5}(schedule|calendar|plan)|tomorrow|this week|next week|book.{0,10}meeting|reschedule)/i.test(lower);
+        const isEmailIntent = /(emails?|inbox|mails?\b|unread|message.?from|reply.?from|got.{0,10}reply|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail))/i.test(lower);
+        const isCalendarIntent = /(calendar|schedule[ds]?|meetings?|appointments?|events?\b|what.{0,5}(on|planned|happening)|busy|free\b|availab|today.{0,5}(schedule|calendar|plan)|tomorrow|this week|next week|book.{0,10}meeting|reschedule|add.{0,10}(event|meeting|calendar|appointment)|create.{0,10}(event|meeting)|set.{0,10}(reminder|meeting)|cancel.{0,10}(event|meeting))/i.test(lower);
         const isContactsIntent = /(contacts?\b|phone.?number|email.?address|look.?up.{0,10}(contact|person|number)|find.{0,10}(contact|number|phone)|directory)/i.test(lower) && !isEmailIntent;
 
-        console.log(`[Connector] Intent — email:${isEmailIntent} cal:${isCalendarIntent} contacts:${isContactsIntent} msg:"${message.substring(0, 80)}"`);
+        // Detect write vs read intent
+        const isWriteCalendar = /(add|create|book|set|schedule|put|make|insert).{0,15}(event|meeting|appointment|calendar|reminder)/i.test(lower) || /(add.{0,5}to.{0,10}calendar|book.{0,5}a?.{0,5}meeting|schedule.{0,5}a?.{0,5}meeting)/i.test(lower);
+        const isCancelCalendar = /(cancel|delete|remove).{0,15}(event|meeting|appointment)/i.test(lower);
+        const isSendEmail = /(send|compose|write|draft).{0,15}(email|mail|message|reply)/i.test(lower);
 
-        if (isEmailIntent || isCalendarIntent || isContactsIntent) {
-          try {
-            const connectorToken = await getEmailToken(userId);
-            console.log(`[Connector] Token — provider:${connectorToken?.provider || "NONE"} hasToken:${!!connectorToken?.accessToken}`);
-            if (connectorToken) {
-              const { accessToken, provider } = connectorToken;
-              let connectorContext = "";
+        console.log(`[Connector] Intent — email:${isEmailIntent} cal:${isCalendarIntent} contacts:${isContactsIntent} writeCalendar:${isWriteCalendar} cancelCal:${isCancelCalendar} sendEmail:${isSendEmail} msg:"${message.substring(0, 80)}"`);
 
-              if (isEmailIntent) {
-                const queryMatch = message.match(/from\s+(\S+)|about\s+"?([^"]+)"?|subject[:\s]+(\S+)/i);
-                const searchQuery = queryMatch ? (queryMatch[1] || queryMatch[2] || queryMatch[3]) : message.replace(/\b(check|search|find|show|get|my|me|the|any|all|new|recent|latest|emails?|inbox|mails?|messages?|please|can you|did i|have i|got|if i)\b/gi, '').trim() || "is:unread";
-                console.log(`[Connector] Email query: "${searchQuery}"`);
+        try {
+          const connectorToken = await getEmailToken(userId);
+          console.log(`[Connector] Token — provider:${connectorToken?.provider || "NONE"} hasToken:${!!connectorToken?.accessToken}`);
+          if (connectorToken) {
+            const { accessToken, provider } = connectorToken;
+            let connectorContext = "";
+            const providerLabel = provider === "google" ? "Google" : "Microsoft";
 
-                try {
-                  if (provider === "google") {
-                    const { searchGmailMessages } = await import("@/lib/google-tools");
-                    const emails = await searchGmailMessages(accessToken, searchQuery, 8);
-                    console.log(`[Connector] Gmail returned ${emails.length} results`);
-                    connectorContext = emails.length > 0
-                      ? `\n\n[EMAIL_RESULTS — from user's Gmail, query: "${searchQuery}"]\n` +
-                        emails.map((e, i) => `${i + 1}. FROM: ${e.from} | SUBJECT: ${e.subject} | DATE: ${e.date} | PREVIEW: ${e.snippet}`).join("\n") +
-                        `\n[END_EMAIL_RESULTS]`
-                      : `\n\n[EMAIL_RESULTS — No emails found matching "${searchQuery}" in user's Gmail]\n`;
-                  } else {
-                    const { searchOutlookMessages } = await import("@/lib/microsoft-tools");
-                    const emails = await searchOutlookMessages(accessToken, searchQuery, 8);
-                    console.log(`[Connector] Outlook returned ${emails.length} results`);
-                    connectorContext = emails.length > 0
-                      ? `\n\n[EMAIL_RESULTS — from user's Outlook, query: "${searchQuery}"]\n` +
-                        emails.map((e, i) => `${i + 1}. FROM: ${e.from} | SUBJECT: ${e.subject} | DATE: ${e.date} | PREVIEW: ${e.snippet}`).join("\n") +
-                        `\n[END_EMAIL_RESULTS]`
-                      : `\n\n[EMAIL_RESULTS — No emails found matching "${searchQuery}" in user's Outlook]\n`;
-                  }
-                } catch (emailErr) {
-                  console.error(`[Connector] Email error:`, emailErr);
-                  connectorContext = `\n\n[EMAIL_RESULTS — Error accessing emails: ${emailErr instanceof Error ? emailErr.message : "unknown error"}. The user may need to reconnect their account.]\n`;
-                }
+            // ── EMAIL: Read/Search ──
+            if (isEmailIntent && !isSendEmail) {
+              connectorStatusText = "Searching your emails...";
+              const fromMatch = message.match(/from\s+([A-Za-z0-9._%+\-@]+)/i);
+              const aboutMatch = message.match(/about\s+"?([^"]+)"?/i);
+              const subjectMatch = message.match(/subject[:\s]+(.+?)(?:\s*$|\s+and\s|\s+or\s)/i);
+              let searchQuery: string;
+              if (fromMatch) {
+                searchQuery = provider === "google" ? `from:${fromMatch[1]}` : fromMatch[1];
+              } else if (aboutMatch) {
+                searchQuery = aboutMatch[1];
+              } else if (subjectMatch) {
+                searchQuery = subjectMatch[1];
+              } else {
+                searchQuery = message.replace(/\b(check|search|find|show|get|my|me|the|any|all|new|recent|latest|emails?|inbox|mails?\b|messages?|please|can you|did i|have i|got|if i|do i have|are there)\b/gi, '').trim() || "is:unread";
               }
+              console.log(`[Connector] Email search query: "${searchQuery}"`);
 
-              if (isCalendarIntent) {
-                const now = new Date();
-                let timeMin = new Date(now); timeMin.setHours(0, 0, 0, 0);
-                let timeMax = new Date(timeMin.getTime() + 24 * 60 * 60 * 1000);
-                if (/tomorrow/i.test(lower)) {
-                  timeMin = new Date(now); timeMin.setDate(timeMin.getDate() + 1); timeMin.setHours(0, 0, 0, 0);
-                  timeMax = new Date(timeMin.getTime() + 24 * 60 * 60 * 1000);
-                } else if (/this week|next few days/i.test(lower)) {
-                  timeMax = new Date(timeMin.getTime() + 7 * 24 * 60 * 60 * 1000);
-                } else if (/next week/i.test(lower)) {
-                  const nextMon = new Date(now); nextMon.setDate(nextMon.getDate() + (8 - nextMon.getDay()) % 7);
-                  nextMon.setHours(0, 0, 0, 0);
-                  timeMin = nextMon;
-                  timeMax = new Date(nextMon.getTime() + 7 * 24 * 60 * 60 * 1000);
+              try {
+                if (provider === "google") {
+                  const { searchGmailMessages } = await import("@/lib/google-tools");
+                  const emails = await searchGmailMessages(accessToken, searchQuery, 10);
+                  console.log(`[Connector] Gmail returned ${emails.length} results`);
+                  connectorContext = emails.length > 0
+                    ? `\n\n[EMAIL_RESULTS — from user's Gmail, query: "${searchQuery}"]\n` +
+                      emails.map((e, i) => `${i + 1}. FROM: ${e.from} | SUBJECT: ${e.subject} | DATE: ${e.date} | PREVIEW: ${e.snippet}`).join("\n") +
+                      `\n[END_EMAIL_RESULTS]`
+                    : `\n\n[EMAIL_RESULTS — No emails found matching "${searchQuery}" in user's Gmail]\n`;
+                } else {
+                  const { searchOutlookMessages } = await import("@/lib/microsoft-tools");
+                  const emails = await searchOutlookMessages(accessToken, searchQuery, 10);
+                  console.log(`[Connector] Outlook returned ${emails.length} results`);
+                  connectorContext = emails.length > 0
+                    ? `\n\n[EMAIL_RESULTS — from user's Outlook, query: "${searchQuery}"]\n` +
+                      emails.map((e, i) => `${i + 1}. FROM: ${e.from} | SUBJECT: ${e.subject} | DATE: ${e.date} | PREVIEW: ${e.snippet}`).join("\n") +
+                      `\n[END_EMAIL_RESULTS]`
+                    : `\n\n[EMAIL_RESULTS — No emails found matching "${searchQuery}" in user's Outlook]\n`;
                 }
-                console.log(`[Connector] Calendar range: ${timeMin.toISOString()} → ${timeMax.toISOString()}`);
-
-                try {
-                  if (provider === "google") {
-                    const { searchGoogleCalendarEvents } = await import("@/lib/google-tools");
-                    const events = await searchGoogleCalendarEvents(accessToken, undefined, timeMin.toISOString(), timeMax.toISOString(), 15);
-                    console.log(`[Connector] Google Calendar returned ${events.length} events`);
-                    connectorContext += events.length > 0
-                      ? `\n\n[CALENDAR_EVENTS — from user's Google Calendar]\n` +
-                        events.map((e, i) => `${i + 1}. "${e.summary}" | START: ${e.start} | END: ${e.end}${e.location ? ` | LOCATION: ${e.location}` : ""}${e.attendees?.length ? ` | ATTENDEES: ${e.attendees.join(", ")}` : ""}`).join("\n") +
-                        `\n[END_CALENDAR_EVENTS]`
-                      : `\n\n[CALENDAR_EVENTS — No events found in the requested time range. The user's calendar is clear.]\n`;
-                  } else {
-                    const { searchOutlookCalendarEvents } = await import("@/lib/microsoft-tools");
-                    const events = await searchOutlookCalendarEvents(accessToken, undefined, timeMin.toISOString(), timeMax.toISOString(), 15);
-                    console.log(`[Connector] Outlook Calendar returned ${events.length} events`);
-                    connectorContext += events.length > 0
-                      ? `\n\n[CALENDAR_EVENTS — from user's Outlook Calendar]\n` +
-                        events.map((e, i) => `${i + 1}. "${e.summary}" | START: ${e.start} | END: ${e.end}${e.location ? ` | LOCATION: ${e.location}` : ""}${e.attendees?.length ? ` | ATTENDEES: ${e.attendees.join(", ")}` : ""}`).join("\n") +
-                        `\n[END_CALENDAR_EVENTS]`
-                      : `\n\n[CALENDAR_EVENTS — No events found in the requested time range. The user's calendar is clear.]\n`;
-                  }
-                } catch (calErr) {
-                  console.error(`[Connector] Calendar error:`, calErr);
-                  connectorContext += `\n\n[CALENDAR_EVENTS — Error accessing calendar: ${calErr instanceof Error ? calErr.message : "unknown error"}. The user may need to reconnect their account.]\n`;
-                }
+              } catch (emailErr) {
+                console.error(`[Connector] Email error:`, emailErr);
+                connectorContext = `\n\n[EMAIL_ERROR — Failed to access emails: ${emailErr instanceof Error ? emailErr.message : "unknown"}. The user may need to reconnect their ${providerLabel} account.]\n`;
               }
-
-              if (isContactsIntent) {
-                const contactQuery = message.replace(/\b(find|search|look ?up|get|show|my|me|the|contacts?|phone|number|email|address|of|for|please|can you|what is|what's)\b/gi, '').trim();
-                console.log(`[Connector] Contacts query: "${contactQuery}"`);
-                try {
-                  if (provider === "google") {
-                    const { searchGoogleContacts } = await import("@/lib/google-tools");
-                    const contacts = await searchGoogleContacts(accessToken, contactQuery || "a", 10);
-                    console.log(`[Connector] Google Contacts returned ${contacts.length} results`);
-                    connectorContext += contacts.length > 0
-                      ? `\n\n[CONTACTS_RESULTS — from user's Google Contacts]\n` +
-                        contacts.map((c, i) => `${i + 1}. ${c.name}${c.email ? ` | EMAIL: ${c.email}` : ""}${c.phone ? ` | PHONE: ${c.phone}` : ""}${c.organization ? ` | ORG: ${c.organization}` : ""}`).join("\n") +
-                        `\n[END_CONTACTS_RESULTS]`
-                      : `\n\n[CONTACTS_RESULTS — No contacts found matching "${contactQuery}"]\n`;
-                  } else {
-                    const { searchOutlookContacts } = await import("@/lib/microsoft-tools");
-                    const contacts = await searchOutlookContacts(accessToken, contactQuery || "a", 10);
-                    console.log(`[Connector] Outlook Contacts returned ${contacts.length} results`);
-                    connectorContext += contacts.length > 0
-                      ? `\n\n[CONTACTS_RESULTS — from user's Outlook Contacts]\n` +
-                        contacts.map((c, i) => `${i + 1}. ${c.name}${c.email ? ` | EMAIL: ${c.email}` : ""}${c.phone ? ` | PHONE: ${c.phone}` : ""}${c.organization ? ` | ORG: ${c.organization}` : ""}`).join("\n") +
-                        `\n[END_CONTACTS_RESULTS]`
-                      : `\n\n[CONTACTS_RESULTS — No contacts found matching "${contactQuery}"]\n`;
-                  }
-                } catch (contactErr) {
-                  console.error(`[Connector] Contacts error:`, contactErr);
-                  connectorContext += `\n\n[CONTACTS_RESULTS — Error accessing contacts: ${contactErr instanceof Error ? contactErr.message : "unknown error"}. The user may need to reconnect their account.]\n`;
-                }
-              }
-
-              // Inject connector data into the last user message (same pattern as web search)
-              if (connectorContext) {
-                console.log(`[Connector] Injecting ${connectorContext.length} chars into message`);
-                const last = chatMessages[chatMessages.length - 1];
-                if (last?.role === "user") {
-                  const ctx = `\n\n[INTERNAL_CONTEXT: The following is REAL data from the user's connected account. Present it clearly and helpfully. Do NOT say you cannot access their account — you already have the data below.]`;
-                  if (typeof last.content === "string") last.content += ctx + connectorContext;
-                  else if (Array.isArray(last.content)) last.content.push({ type: "text", text: ctx + connectorContext });
-                }
-                systemPrompt += `\n\nCONNECTOR DATA AVAILABLE: The user's message includes real data from their connected ${provider === "google" ? "Google" : "Microsoft"} account (emails, calendar, or contacts). Present this data clearly with good formatting. Do NOT mention searching or APIs — just present the information naturally as if you have direct access to their account.`;
-              }
-            } else {
-              console.warn(`[Connector] No valid token found for user ${userId} — skipping connector`);
             }
-          } catch (e) {
-            console.error("[Connector] Fatal error:", e);
+
+            // ── EMAIL: Send/Draft/Compose ──
+            if (isEmailIntent && isSendEmail) {
+              connectorStatusText = "Drafting your email...";
+              try {
+                const extractModel = createMistral({ apiKey: process.env.MISTRAL_API_KEY_1 || process.env.MISTRAL_API_KEY || "" });
+                const extraction = await generateText({
+                  model: extractModel("mistral-small-latest"),
+                  system: `You extract email parameters from natural language. Return ONLY valid JSON, no markdown. Today is ${new Date().toISOString().split("T")[0]}.`,
+                  prompt: `Extract from this message: "${message}"\n\nReturn JSON: {"to":"email@example.com","subject":"...","body":"...","isDraft":true/false}\n\nRules:\n- If no explicit email address, set to to ""\n- isDraft=true if user says "draft", otherwise false (they want to send)\n- Write a professional email body based on context\n- Subject should be concise`,
+                  maxOutputTokens: 500,
+                });
+                let emailParams: { to: string; subject: string; body: string; isDraft: boolean };
+                try {
+                  const cleaned = extraction.text.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
+                  emailParams = JSON.parse(cleaned);
+                } catch {
+                  connectorContext += `\n\n[EMAIL_ACTION — Could not parse email details from your message. Please specify: recipient email, subject, and what you want to say.]\n`;
+                  emailParams = { to: "", subject: "", body: "", isDraft: true };
+                }
+
+                if (emailParams.to && emailParams.subject) {
+                  if (emailParams.isDraft) {
+                    connectorStatusText = "Creating email draft...";
+                    if (provider === "google") {
+                      const { createGmailDraft } = await import("@/lib/google-tools");
+                      const result = await createGmailDraft(accessToken, emailParams.to, emailParams.subject, emailParams.body);
+                      console.log(`[Connector] Gmail draft result:`, result);
+                      connectorContext += result.success
+                        ? `\n\n[EMAIL_ACTION — Successfully created a draft email in Gmail]\nTO: ${emailParams.to}\nSUBJECT: ${emailParams.subject}\nBODY: ${emailParams.body}\n[The draft is saved and ready to review in Gmail.]\n`
+                        : `\n\n[EMAIL_ACTION — Failed to create draft: ${result.error}]\n`;
+                    } else {
+                      const { createOutlookDraft } = await import("@/lib/microsoft-tools");
+                      const result = await createOutlookDraft(accessToken, emailParams.to, emailParams.subject, emailParams.body);
+                      console.log(`[Connector] Outlook draft result:`, result);
+                      connectorContext += result.success
+                        ? `\n\n[EMAIL_ACTION — Successfully created a draft email in Outlook]\nTO: ${emailParams.to}\nSUBJECT: ${emailParams.subject}\nBODY: ${emailParams.body}\n[The draft is saved and ready to review in Outlook.]\n`
+                        : `\n\n[EMAIL_ACTION — Failed to create draft: ${result.error}]\n`;
+                    }
+                  } else {
+                    connectorStatusText = "Sending your email...";
+                    if (provider === "google") {
+                      const { sendGmailMessage } = await import("@/lib/google-tools");
+                      const result = await sendGmailMessage(accessToken, emailParams.to, emailParams.subject, emailParams.body);
+                      console.log(`[Connector] Gmail send result:`, result);
+                      connectorContext += result.success
+                        ? `\n\n[EMAIL_ACTION — Successfully sent email via Gmail]\nTO: ${emailParams.to}\nSUBJECT: ${emailParams.subject}\nBODY: ${emailParams.body}\n[Email has been sent successfully.]\n`
+                        : `\n\n[EMAIL_ACTION — Failed to send email: ${result.error}]\n`;
+                    } else {
+                      const { sendOutlookMessage } = await import("@/lib/microsoft-tools");
+                      const result = await sendOutlookMessage(accessToken, emailParams.to, emailParams.subject, emailParams.body);
+                      console.log(`[Connector] Outlook send result:`, result);
+                      connectorContext += result.success
+                        ? `\n\n[EMAIL_ACTION — Successfully sent email via Outlook]\nTO: ${emailParams.to}\nSUBJECT: ${emailParams.subject}\nBODY: ${emailParams.body}\n[Email has been sent successfully.]\n`
+                        : `\n\n[EMAIL_ACTION — Failed to send email: ${result.error}]\n`;
+                    }
+                  }
+                } else {
+                  connectorContext += `\n\n[EMAIL_ACTION — Missing required info. To send an email, please provide: recipient email address, subject, and message content.]\n`;
+                }
+              } catch (sendErr) {
+                console.error(`[Connector] Email send/draft error:`, sendErr);
+                connectorContext += `\n\n[EMAIL_ACTION — Error: ${sendErr instanceof Error ? sendErr.message : "unknown"}]\n`;
+              }
+            }
+
+            // ── CALENDAR: Create event ──
+            if (isCalendarIntent && isWriteCalendar) {
+              connectorStatusText = "Adding to your calendar...";
+              try {
+                const extractModel = createMistral({ apiKey: process.env.MISTRAL_API_KEY_1 || process.env.MISTRAL_API_KEY || "" });
+                const now = new Date();
+                const extraction = await generateText({
+                  model: extractModel("mistral-small-latest"),
+                  system: `You extract calendar event parameters from natural language. Return ONLY valid JSON, no markdown. Current date/time: ${now.toISOString()}. The user's timezone context: the server time is UTC.`,
+                  prompt: `Extract from this message: "${message}"\n\nReturn JSON: {"summary":"event title","startDateTime":"ISO8601","endDateTime":"ISO8601","location":"","description":"","attendees":[]}\n\nRules:\n- summary: short descriptive title\n- If time is ambiguous (e.g. "8pm"), assume today if it hasn't passed, tomorrow if it has\n- If no end time, default to 1 hour after start\n- attendees: array of email strings, empty if none mentioned\n- location/description: empty string if not mentioned\n- ALL datetimes must be valid ISO 8601 format`,
+                  maxOutputTokens: 500,
+                });
+                let eventParams: { summary: string; startDateTime: string; endDateTime: string; location?: string; description?: string; attendees?: string[] };
+                try {
+                  const cleaned = extraction.text.replace(/```json?\s*/g, '').replace(/```/g, '').trim();
+                  eventParams = JSON.parse(cleaned);
+                } catch {
+                  connectorContext += `\n\n[CALENDAR_ACTION — Could not understand event details from your message. Please specify: what the event is, when it starts, and optionally when it ends.]\n`;
+                  eventParams = { summary: "", startDateTime: "", endDateTime: "" };
+                }
+
+                if (eventParams.summary && eventParams.startDateTime) {
+                  console.log(`[Connector] Creating calendar event: ${eventParams.summary} at ${eventParams.startDateTime}`);
+                  if (provider === "google") {
+                    const { createGoogleCalendarEvent } = await import("@/lib/google-tools");
+                    const result = await createGoogleCalendarEvent(accessToken, eventParams.summary, eventParams.startDateTime, eventParams.endDateTime, eventParams.description, eventParams.location, eventParams.attendees);
+                    console.log(`[Connector] Google Calendar create result:`, result);
+                    connectorContext += result.success
+                      ? `\n\n[CALENDAR_ACTION — Successfully created event in Google Calendar]\nTITLE: ${eventParams.summary}\nSTART: ${eventParams.startDateTime}\nEND: ${eventParams.endDateTime}${eventParams.location ? `\nLOCATION: ${eventParams.location}` : ""}${result.htmlLink ? `\nLINK: ${result.htmlLink}` : ""}\n[Event has been added to the calendar.]\n`
+                      : `\n\n[CALENDAR_ACTION — Failed to create event: ${result.error}]\n`;
+                  } else {
+                    const { createOutlookCalendarEvent } = await import("@/lib/microsoft-tools");
+                    const result = await createOutlookCalendarEvent(accessToken, eventParams.summary, eventParams.startDateTime, eventParams.endDateTime, eventParams.description, eventParams.location, eventParams.attendees);
+                    console.log(`[Connector] Outlook Calendar create result:`, result);
+                    connectorContext += result.success
+                      ? `\n\n[CALENDAR_ACTION — Successfully created event in Outlook Calendar]\nTITLE: ${eventParams.summary}\nSTART: ${eventParams.startDateTime}\nEND: ${eventParams.endDateTime}${eventParams.location ? `\nLOCATION: ${eventParams.location}` : ""}${result.webLink ? `\nLINK: ${result.webLink}` : ""}\n[Event has been added to the calendar.]\n`
+                      : `\n\n[CALENDAR_ACTION — Failed to create event: ${result.error}]\n`;
+                  }
+                } else {
+                  connectorContext += `\n\n[CALENDAR_ACTION — Could not determine event details. Please specify the event name and time (e.g. "Add a meeting with John tomorrow at 3pm").]\n`;
+                }
+              } catch (createErr) {
+                console.error(`[Connector] Calendar create error:`, createErr);
+                connectorContext += `\n\n[CALENDAR_ACTION — Error creating event: ${createErr instanceof Error ? createErr.message : "unknown"}]\n`;
+              }
+            }
+
+            // ── CALENDAR: Read/Search events (when not creating) ──
+            if (isCalendarIntent && !isWriteCalendar && !isCancelCalendar) {
+              connectorStatusText = "Checking your calendar...";
+              const now = new Date();
+              let timeMin = new Date(now); timeMin.setHours(0, 0, 0, 0);
+              let timeMax = new Date(timeMin.getTime() + 24 * 60 * 60 * 1000);
+              if (/tomorrow/i.test(lower)) {
+                timeMin = new Date(now); timeMin.setDate(timeMin.getDate() + 1); timeMin.setHours(0, 0, 0, 0);
+                timeMax = new Date(timeMin.getTime() + 24 * 60 * 60 * 1000);
+              } else if (/this week|next few days/i.test(lower)) {
+                timeMax = new Date(timeMin.getTime() + 7 * 24 * 60 * 60 * 1000);
+              } else if (/next week/i.test(lower)) {
+                const nextMon = new Date(now); nextMon.setDate(nextMon.getDate() + (8 - nextMon.getDay()) % 7);
+                nextMon.setHours(0, 0, 0, 0);
+                timeMin = nextMon;
+                timeMax = new Date(nextMon.getTime() + 7 * 24 * 60 * 60 * 1000);
+              }
+              console.log(`[Connector] Calendar range: ${timeMin.toISOString()} → ${timeMax.toISOString()}`);
+
+              try {
+                if (provider === "google") {
+                  const { searchGoogleCalendarEvents } = await import("@/lib/google-tools");
+                  const events = await searchGoogleCalendarEvents(accessToken, undefined, timeMin.toISOString(), timeMax.toISOString(), 15);
+                  console.log(`[Connector] Google Calendar returned ${events.length} events`);
+                  connectorContext += events.length > 0
+                    ? `\n\n[CALENDAR_EVENTS — from user's Google Calendar]\n` +
+                      events.map((e, i) => `${i + 1}. "${e.summary}" | START: ${e.start} | END: ${e.end}${e.location ? ` | LOCATION: ${e.location}` : ""}${e.attendees?.length ? ` | ATTENDEES: ${e.attendees.join(", ")}` : ""}`).join("\n") +
+                      `\n[END_CALENDAR_EVENTS]`
+                    : `\n\n[CALENDAR_EVENTS — No events found in the requested time range. The user's calendar is clear.]\n`;
+                } else {
+                  const { searchOutlookCalendarEvents } = await import("@/lib/microsoft-tools");
+                  const events = await searchOutlookCalendarEvents(accessToken, undefined, timeMin.toISOString(), timeMax.toISOString(), 15);
+                  console.log(`[Connector] Outlook Calendar returned ${events.length} events`);
+                  connectorContext += events.length > 0
+                    ? `\n\n[CALENDAR_EVENTS — from user's Outlook Calendar]\n` +
+                      events.map((e, i) => `${i + 1}. "${e.summary}" | START: ${e.start} | END: ${e.end}${e.location ? ` | LOCATION: ${e.location}` : ""}${e.attendees?.length ? ` | ATTENDEES: ${e.attendees.join(", ")}` : ""}`).join("\n") +
+                      `\n[END_CALENDAR_EVENTS]`
+                    : `\n\n[CALENDAR_EVENTS — No events found in the requested time range. The user's calendar is clear.]\n`;
+                }
+              } catch (calErr) {
+                console.error(`[Connector] Calendar error:`, calErr);
+                connectorContext += `\n\n[CALENDAR_ERROR — Failed to access calendar: ${calErr instanceof Error ? calErr.message : "unknown"}. The user may need to reconnect their ${providerLabel} account.]\n`;
+              }
+            }
+
+            // ── CONTACTS: Search ──
+            if (isContactsIntent) {
+              connectorStatusText = "Looking up your contacts...";
+              const contactQuery = message.replace(/\b(find|search|look ?up|get|show|my|me|the|contacts?|phone|number|email|address|of|for|please|can you|what is|what's)\b/gi, '').trim();
+              console.log(`[Connector] Contacts query: "${contactQuery}"`);
+              try {
+                if (provider === "google") {
+                  const { searchGoogleContacts } = await import("@/lib/google-tools");
+                  const contacts = await searchGoogleContacts(accessToken, contactQuery || "a", 10);
+                  console.log(`[Connector] Google Contacts returned ${contacts.length} results`);
+                  connectorContext += contacts.length > 0
+                    ? `\n\n[CONTACTS_RESULTS — from user's Google Contacts]\n` +
+                      contacts.map((c, i) => `${i + 1}. ${c.name}${c.email ? ` | EMAIL: ${c.email}` : ""}${c.phone ? ` | PHONE: ${c.phone}` : ""}${c.organization ? ` | ORG: ${c.organization}` : ""}`).join("\n") +
+                      `\n[END_CONTACTS_RESULTS]`
+                    : `\n\n[CONTACTS_RESULTS — No contacts found matching "${contactQuery}"]\n`;
+                } else {
+                  const { searchOutlookContacts } = await import("@/lib/microsoft-tools");
+                  const contacts = await searchOutlookContacts(accessToken, contactQuery || "a", 10);
+                  console.log(`[Connector] Outlook Contacts returned ${contacts.length} results`);
+                  connectorContext += contacts.length > 0
+                    ? `\n\n[CONTACTS_RESULTS — from user's Outlook Contacts]\n` +
+                      contacts.map((c, i) => `${i + 1}. ${c.name}${c.email ? ` | EMAIL: ${c.email}` : ""}${c.phone ? ` | PHONE: ${c.phone}` : ""}${c.organization ? ` | ORG: ${c.organization}` : ""}`).join("\n") +
+                      `\n[END_CONTACTS_RESULTS]`
+                    : `\n\n[CONTACTS_RESULTS — No contacts found matching "${contactQuery}"]\n`;
+                }
+              } catch (contactErr) {
+                console.error(`[Connector] Contacts error:`, contactErr);
+                connectorContext += `\n\n[CONTACTS_ERROR — Failed to access contacts: ${contactErr instanceof Error ? contactErr.message : "unknown"}. The user may need to reconnect their ${providerLabel} account.]\n`;
+              }
+            }
+
+            // Inject connector data into the last user message (same pattern as web search)
+            if (connectorContext) {
+              console.log(`[Connector] Injecting ${connectorContext.length} chars into message`);
+              const last = chatMessages[chatMessages.length - 1];
+              if (last?.role === "user") {
+                const ctx = `\n\n[INTERNAL_CONTEXT: The following is REAL data from the user's connected ${providerLabel} account. You performed real actions or fetched real data. Present results clearly and helpfully. Do NOT say you cannot access their account — you already have the data below. If an action was performed (email sent, event created), confirm it to the user with the details.]`;
+                if (typeof last.content === "string") last.content += ctx + connectorContext;
+                else if (Array.isArray(last.content)) last.content.push({ type: "text", text: ctx + connectorContext });
+              }
+              systemPrompt += `\n\nCONNECTOR DATA AVAILABLE: The user's message includes real data from their connected ${providerLabel} account. You have ALREADY performed the requested action or fetched the requested data. Present results clearly with good formatting. If an event was created, confirm it with time/title. If emails were found, summarize them. If an email was sent/drafted, confirm with details. Do NOT mention APIs, tokens, or searching — present naturally as if you have direct access.`;
+            }
+          } else {
+            console.warn(`[Connector] No valid token found for user ${userId} — skipping connector`);
+            connectorStatusText = "";
           }
+        } catch (e) {
+          console.error("[Connector] Fatal error:", e);
+          connectorStatusText = "";
         }
       }
 
@@ -853,17 +998,23 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
         maxOutputTokens: isCanvasRequest ? 16000 : 4096,
       });
 
-      // If we have sources, prepend them as a special JSON header line before the stream
-      if (sourcesForFrontend.length > 0) {
-        const sourcesLine = `\x00SOURCES:${JSON.stringify(sourcesForFrontend)}\x00\n`;
+      // If we have status or sources, prepend them as special header lines before the stream
+      const hasHeaders = sourcesForFrontend.length > 0 || connectorStatusText;
+      if (hasHeaders) {
         const encoder = new TextEncoder();
-        const sourcesChunk = encoder.encode(sourcesLine);
+        const headerChunks: Uint8Array[] = [];
+        if (connectorStatusText) {
+          headerChunks.push(encoder.encode(`\x00STATUS:${connectorStatusText}\x00\n`));
+        }
+        if (sourcesForFrontend.length > 0) {
+          headerChunks.push(encoder.encode(`\x00SOURCES:${JSON.stringify(sourcesForFrontend)}\x00\n`));
+        }
         const textStream = streamResult.toTextStreamResponse();
         const originalBody = textStream.body;
         if (originalBody) {
           const combinedStream = new ReadableStream({
             async start(controller) {
-              controller.enqueue(sourcesChunk);
+              for (const chunk of headerChunks) controller.enqueue(chunk);
               const reader = originalBody.getReader();
               try {
                 while (true) {
