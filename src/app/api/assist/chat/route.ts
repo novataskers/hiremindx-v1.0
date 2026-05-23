@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { createMistral } from "@ai-sdk/mistral";
-import { streamText } from "ai";
+import { streamText, generateText } from "ai";
 import { db } from "@/db";
 import mammoth from "mammoth";
 import { searchWithSerper, getDateContext } from "@/lib/search-utils";
@@ -742,12 +742,91 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
         }
       }
 
+      // ── Tool-calling: use generateText (reliable) then stream result back ──
+      if (assistTools) {
+        try {
+          const toolResult = await generateText({
+            model: mistralStream(model),
+            system: systemPrompt,
+            messages: chatMessages,
+            maxOutputTokens: 4096,
+            tools: assistTools,
+            maxSteps: 5,
+          });
+
+          const finalText = toolResult.text || "I wasn't able to retrieve that information. Please try again or check your account connection.";
+
+          // Stream the result back as text (matches frontend expectation)
+          const encoder = new TextEncoder();
+          const textStream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode(finalText));
+              controller.close();
+            },
+          });
+
+          // Auto-save research session
+          if (message && message.length > 15 && !bodyAttachments?.length) {
+            const lower = message.toLowerCase().trim();
+            const isConversational = /^(hi|hey|hello|thanks|thank you|ok|okay|yes|no|sure|got it|great|cool|nice|bye|goodbye|please|sorry|hmm|yep|yeah|alright)\b/i.test(lower);
+            if (!isConversational) {
+              try {
+                const stopWords = new Set(['the','a','an','is','are','was','were','be','been','have','has','had','do','does','did','will','would','could','should','may','might','can','to','of','in','for','on','with','at','by','from','as','and','but','or','not','so','this','that','i','me','my','we','you','your','he','she','it','they','their','how','what','when','where','which','who','why','tell','show','give','find','search','research','help']);
+                const words = lower.replace(/[^a-z0-9\s-]/g, '').split(/\s+/).filter((w: string) => w.length > 2 && !stopWords.has(w));
+                const keywords = [...new Set(words)].slice(0, 10);
+                const topic = keywords.slice(0, 4).join(' ') || 'general';
+                let category = 'general';
+                if (/\b(hir|recruit|job|talent|candidate|workforce|employ|staff)/.test(lower)) category = 'hiring';
+                else if (/\b(ai|machine learning|ml|deep learning|tech|software|algorithm|neural|gpt|llm)/.test(lower)) category = 'technology';
+                else if (/\b(market|stock|crypto|invest|financ|econom|trade|price)/.test(lower)) category = 'market';
+                else if (/\b(universit|college|education|student|academic|school|professor|teach)/.test(lower)) category = 'education';
+                const entityPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g;
+                const entities: string[] = [];
+                let match;
+                while ((match = entityPattern.exec(message)) !== null) {
+                  if (!stopWords.has(match[1].toLowerCase()) && match[1].length > 2) entities.push(match[1]);
+                }
+                const existing = await db.select({ id: researchSessions.id }).from(researchSessions).where(eq(researchSessions.userId, userId)).orderBy(desc(researchSessions.createdAt));
+                if (existing.length >= 50) {
+                  const toDelete = existing.slice(49).map(s => s.id);
+                  for (const id of toDelete) {
+                    await db.delete(researchSessions).where(eq(researchSessions.id, id));
+                  }
+                }
+                await db.insert(researchSessions).values({
+                  userId, query: message.substring(0, 500), topic, keywords, entities: [...new Set(entities)], category, createdAt: new Date().toISOString(),
+                });
+              } catch (e) { console.error('Error saving research session:', e); }
+            }
+          }
+
+          // Clean up R2 files
+          for (const url of fileUrlsToDelete) {
+            try { await deleteFromR2(url); } catch (e) { console.error("R2 delete error:", e); }
+          }
+
+          // Prepend sources if available
+          if (sourcesForFrontend.length > 0) {
+            const sourcesLine = `\x00SOURCES:${JSON.stringify(sourcesForFrontend)}\x00\n`;
+            return new Response(sourcesLine + finalText, {
+              headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            });
+          }
+
+          return new Response(textStream, {
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+          });
+        } catch (toolError) {
+          console.error("Tool-calling error, falling back to normal stream:", toolError);
+          // Fall through to normal streamText below
+        }
+      }
+
       const streamResult = streamText({
         model: mistralStream(model),
         system: systemPrompt,
         messages: chatMessages,
         maxOutputTokens: isCanvasRequest ? 16000 : 4096,
-        ...(assistTools ? { tools: assistTools, maxSteps: 3 } : {}),
       });
 
       // If we have sources, prepend them as a special JSON header line before the stream
