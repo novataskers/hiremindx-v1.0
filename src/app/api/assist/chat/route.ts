@@ -558,8 +558,8 @@ export async function POST(request: NextRequest) {
       let connectorStatusText = ""; // Perplexity-style status for frontend
       if (!isCanvasRequest && !isDocumentRequest && message) {
         const lower = message.toLowerCase();
-        const hasEmailIntent = /(emails?|inbox|mails?\b|unread|message.?from|reply.?from|got.{0,10}reply|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail))/i.test(lower);
-        const hasCalendarIntent = /(calendar|schedule[ds]?|meetings?|appointments?|events?\b|what.{0,5}(on|planned|happening)|busy|free\b|availab|today.{0,5}(schedule|calendar|plan)|tomorrow|this week|next week|book.{0,10}meeting|reschedule|add.{0,10}(event|meeting|calendar|appointment)|create.{0,10}(event|meeting)|set.{0,10}(reminder|meeting)|cancel.{0,10}(event|meeting))/i.test(lower);
+        const hasEmailIntent = /(emails?|e-?mails?|inbox|mails?\b|unread|message.?from|reply.?from|got.{0,10}reply|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail))/i.test(lower);
+        const hasCalendarIntent = /(cal[ae]n[dae]+[ae]r|calender|claendar|calandar|schedule[ds]?|sc?hedule|meetings?|mee?tings?|appointments?|appoint?ments?|events?\b|what.{0,15}(on|planned|happening|have)|busy|free\b|availab|today.{0,5}(schedule|cal|plan)|tomorrow|this week|next week|book.{0,10}(meeting|event)|reschedule|add.{0,10}(event|meeting|cal|appointment)|create.{0,10}(event|meeting)|set.{0,10}(reminder|meeting)|cancel.{0,10}(event|meeting)|what.{0,15}my.{0,10}(cal|schedule|agenda))/i.test(lower);
         const hasContactsIntent = /(contacts?\b|phone.?number|email.?address|look.?up.{0,10}(contact|person|number)|find.{0,10}(contact|number|phone)|directory)/i.test(lower) && !hasEmailIntent;
         if (hasEmailIntent || hasCalendarIntent || hasContactsIntent) {
           connectorIntentDetected = true;
@@ -719,8 +719,8 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
       // ── Google/Microsoft Connector: full autonomous email/calendar/contacts ──
       if (connectorIntentDetected && message) {
         const lower = message.toLowerCase();
-        const isEmailIntent = /(emails?|inbox|mails?\b|unread|message.?from|reply.?from|got.{0,10}reply|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail))/i.test(lower);
-        const isCalendarIntent = /(calendar|schedule[ds]?|meetings?|appointments?|events?\b|what.{0,5}(on|planned|happening)|busy|free\b|availab|today.{0,5}(schedule|calendar|plan)|tomorrow|this week|next week|book.{0,10}meeting|reschedule|add.{0,10}(event|meeting|calendar|appointment)|create.{0,10}(event|meeting)|set.{0,10}(reminder|meeting)|cancel.{0,10}(event|meeting))/i.test(lower);
+        const isEmailIntent = /(emails?|e-?mails?|inbox|mails?\b|unread|message.?from|reply.?from|got.{0,10}reply|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail))/i.test(lower);
+        const isCalendarIntent = /(cal[ae]n[dae]+[ae]r|calender|claendar|calandar|schedule[ds]?|sc?hedule|meetings?|mee?tings?|appointments?|appoint?ments?|events?\b|what.{0,15}(on|planned|happening|have)|busy|free\b|availab|today.{0,5}(schedule|cal|plan)|tomorrow|this week|next week|book.{0,10}(meeting|event)|reschedule|add.{0,10}(event|meeting|cal|appointment)|create.{0,10}(event|meeting)|set.{0,10}(reminder|meeting)|cancel.{0,10}(event|meeting)|what.{0,15}my.{0,10}(cal|schedule|agenda))/i.test(lower);
         const isContactsIntent = /(contacts?\b|phone.?number|email.?address|look.?up.{0,10}(contact|person|number)|find.{0,10}(contact|number|phone)|directory)/i.test(lower) && !isEmailIntent;
 
         // Detect write vs read intent
