@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { createMistral } from "@ai-sdk/mistral";
-import { streamText, generateText } from "ai";
+import { streamText } from "ai";
 import { db } from "@/db";
 import mammoth from "mammoth";
 import { searchWithSerper, getDateContext } from "@/lib/search-utils";
@@ -16,8 +16,7 @@ import { useFeature } from "@/lib/usage-limits";
 import { fetchFromR2, deleteFromR2 } from "@/lib/r2";
 import { hiremindState, researchSessions } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
-import { getEmailToken, type EmailProvider } from "@/lib/google-auth";
-import { createAssistTools } from "@/lib/assist-tools";
+import { getEmailToken } from "@/lib/google-auth";
 import {
   type ConversationState,
   type EmailAttachment,
@@ -595,30 +594,8 @@ export async function POST(request: NextRequest) {
 
     let systemPrompt = RESEARCH_SYSTEM_PROMPT;
 
-    // ── Inject tool-use instructions when user has connected email/calendar ──
-    if (!isCanvasRequest && !isDocumentRequest) {
-      try {
-        const tokenCheck = await getEmailToken(userId);
-        if (tokenCheck) {
-          systemPrompt += `\n\nCONNECTED ACCOUNT TOOLS:
-The user has connected their ${tokenCheck.provider === "google" ? "Google" : "Microsoft"} account. You have access to these tools:
-- searchEmails: Search and read their emails. Use when they ask about inbox, messages, emails from someone, unread emails, etc.
-- searchCalendarEvents: Search their calendar. Use when they ask about schedule, meetings, appointments, availability, what's planned.
-- updateCalendarEvents: Create, update, or delete calendar events. Use when they want to schedule, reschedule, cancel, or modify meetings.
-- sendEmail: Send an email. Use when they explicitly ask to send/forward an email. ALWAYS confirm recipient and content before calling this tool.
-- draftReply: Draft a reply (saves as draft, does NOT send). Use when they want to prepare a reply to an email.
-- searchContacts: Search their contacts. Use when they ask to look up someone's contact info, email, or phone number.
-
-TOOL USAGE RULES:
-- Call tools ONLY when the user's intent clearly requires them. Normal chat doesn't need tools.
-- For calendar queries about "today", "tomorrow", "this week" etc., calculate the correct ISO 8601 date range using today's date from the context above.
-- When showing email results, format them nicely with sender, subject, date, and a preview.
-- When showing calendar events, format them with time, title, location, and attendees.
-- NEVER call sendEmail without the user explicitly confirming they want to send. Draft first, confirm, then send.
-- If a tool returns an error about expired tokens, tell the user to reconnect their account.`;
-        }
-      } catch {}
-    }
+    // ── Connector data instructions (injected when we fetch email/calendar/contacts data) ──
+    // This is added dynamically below if connector data is fetched
 
     if (isCanvasRequest) {
       systemPrompt += `\n\nCANVAS MODE ACTIVATED — ELITE CODING MODE.
@@ -729,96 +706,129 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
       }
     }
 
-      // ── Create AI tools if user has email/calendar connected ──────────
-      let assistTools: Record<string, any> | undefined;
-      if (!isCanvasRequest && !isDocumentRequest) {
-        try {
-          const emailToken = await getEmailToken(userId);
-          if (emailToken) {
-            assistTools = createAssistTools(emailToken.accessToken, emailToken.provider);
-          }
-        } catch (e) {
-          console.error("Error creating assist tools:", e);
-        }
-      }
+      // ── Google/Microsoft Connector: detect intent → fetch data → inject context ──
+      if (!isCanvasRequest && !isDocumentRequest && message) {
+        const lower = message.toLowerCase();
+        const isEmailIntent = /\b(email|inbox|mail|unread|message from|reply from|got.*reply|check.*mail|search.*mail|search.*email|received|sent.*to|from.*@)\b/i.test(lower);
+        const isCalendarIntent = /\b(calendar|schedule|meeting|appointment|event|what('s| is) (on|planned|happening)|busy|free|available|today('s| is)? (schedule|calendar|plan)|tomorrow|this week|next week|book.*meeting|reschedule)\b/i.test(lower);
+        const isContactsIntent = /\b(contact|phone number|email address|look ?up|find.*(email|number|phone)|who is|directory)\b/i.test(lower) && !isEmailIntent;
 
-      // ── Tool-calling: use generateText (reliable) then stream result back ──
-      if (assistTools) {
-        try {
-          const toolResult = await generateText({
-            model: mistralStream(model),
-            system: systemPrompt,
-            messages: chatMessages,
-            maxOutputTokens: 4096,
-            tools: assistTools,
-            maxSteps: 5,
-          });
+        if (isEmailIntent || isCalendarIntent || isContactsIntent) {
+          try {
+            const connectorToken = await getEmailToken(userId);
+            if (connectorToken) {
+              const { accessToken, provider } = connectorToken;
+              let connectorContext = "";
 
-          const finalText = toolResult.text || "I wasn't able to retrieve that information. Please try again or check your account connection.";
+              if (isEmailIntent) {
+                // Extract search query from the user's message
+                const queryMatch = message.match(/from\s+(\S+)|about\s+"?([^"]+)"?|subject[:\s]+(\S+)/i);
+                const searchQuery = queryMatch ? (queryMatch[1] || queryMatch[2] || queryMatch[3]) : message.replace(/\b(check|search|find|show|get|my|me|the|any|all|new|recent|latest|emails?|inbox|mail|messages?|please|can you|did i|have i|got)\b/gi, '').trim() || "is:unread";
 
-          // Stream the result back as text (matches frontend expectation)
-          const encoder = new TextEncoder();
-          const textStream = new ReadableStream({
-            start(controller) {
-              controller.enqueue(encoder.encode(finalText));
-              controller.close();
-            },
-          });
-
-          // Auto-save research session
-          if (message && message.length > 15 && !bodyAttachments?.length) {
-            const lower = message.toLowerCase().trim();
-            const isConversational = /^(hi|hey|hello|thanks|thank you|ok|okay|yes|no|sure|got it|great|cool|nice|bye|goodbye|please|sorry|hmm|yep|yeah|alright)\b/i.test(lower);
-            if (!isConversational) {
-              try {
-                const stopWords = new Set(['the','a','an','is','are','was','were','be','been','have','has','had','do','does','did','will','would','could','should','may','might','can','to','of','in','for','on','with','at','by','from','as','and','but','or','not','so','this','that','i','me','my','we','you','your','he','she','it','they','their','how','what','when','where','which','who','why','tell','show','give','find','search','research','help']);
-                const words = lower.replace(/[^a-z0-9\s-]/g, '').split(/\s+/).filter((w: string) => w.length > 2 && !stopWords.has(w));
-                const keywords = [...new Set(words)].slice(0, 10);
-                const topic = keywords.slice(0, 4).join(' ') || 'general';
-                let category = 'general';
-                if (/\b(hir|recruit|job|talent|candidate|workforce|employ|staff)/.test(lower)) category = 'hiring';
-                else if (/\b(ai|machine learning|ml|deep learning|tech|software|algorithm|neural|gpt|llm)/.test(lower)) category = 'technology';
-                else if (/\b(market|stock|crypto|invest|financ|econom|trade|price)/.test(lower)) category = 'market';
-                else if (/\b(universit|college|education|student|academic|school|professor|teach)/.test(lower)) category = 'education';
-                const entityPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g;
-                const entities: string[] = [];
-                let match;
-                while ((match = entityPattern.exec(message)) !== null) {
-                  if (!stopWords.has(match[1].toLowerCase()) && match[1].length > 2) entities.push(match[1]);
-                }
-                const existing = await db.select({ id: researchSessions.id }).from(researchSessions).where(eq(researchSessions.userId, userId)).orderBy(desc(researchSessions.createdAt));
-                if (existing.length >= 50) {
-                  const toDelete = existing.slice(49).map(s => s.id);
-                  for (const id of toDelete) {
-                    await db.delete(researchSessions).where(eq(researchSessions.id, id));
+                if (provider === "google") {
+                  const { searchGmailMessages } = await import("@/lib/google-tools");
+                  const emails = await searchGmailMessages(accessToken, searchQuery, 8);
+                  if (emails.length > 0) {
+                    connectorContext = `\n\n[EMAIL_RESULTS — from user's ${provider} inbox, query: "${searchQuery}"]\n` +
+                      emails.map((e, i) => `${i + 1}. FROM: ${e.from} | SUBJECT: ${e.subject} | DATE: ${e.date} | PREVIEW: ${e.snippet}`).join("\n") +
+                      `\n[END_EMAIL_RESULTS]`;
+                  } else {
+                    connectorContext = `\n\n[EMAIL_RESULTS — No emails found matching "${searchQuery}" in user's inbox]\n`;
+                  }
+                } else {
+                  const { searchOutlookMessages } = await import("@/lib/microsoft-tools");
+                  const emails = await searchOutlookMessages(accessToken, searchQuery, 8);
+                  if (emails.length > 0) {
+                    connectorContext = `\n\n[EMAIL_RESULTS — from user's Outlook inbox, query: "${searchQuery}"]\n` +
+                      emails.map((e, i) => `${i + 1}. FROM: ${e.from} | SUBJECT: ${e.subject} | DATE: ${e.date} | PREVIEW: ${e.snippet}`).join("\n") +
+                      `\n[END_EMAIL_RESULTS]`;
+                  } else {
+                    connectorContext = `\n\n[EMAIL_RESULTS — No emails found matching "${searchQuery}" in user's Outlook]\n`;
                   }
                 }
-                await db.insert(researchSessions).values({
-                  userId, query: message.substring(0, 500), topic, keywords, entities: [...new Set(entities)], category, createdAt: new Date().toISOString(),
-                });
-              } catch (e) { console.error('Error saving research session:', e); }
+              }
+
+              if (isCalendarIntent) {
+                // Calculate time range based on intent
+                const now = new Date();
+                let timeMin = now.toISOString();
+                let timeMax = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(); // default: next 24h
+                if (/tomorrow/i.test(lower)) {
+                  const tmrw = new Date(now); tmrw.setDate(tmrw.getDate() + 1); tmrw.setHours(0, 0, 0, 0);
+                  timeMin = tmrw.toISOString();
+                  timeMax = new Date(tmrw.getTime() + 24 * 60 * 60 * 1000).toISOString();
+                } else if (/this week|next few days/i.test(lower)) {
+                  timeMax = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+                } else if (/next week/i.test(lower)) {
+                  const nextMon = new Date(now); nextMon.setDate(nextMon.getDate() + (8 - nextMon.getDay()) % 7);
+                  nextMon.setHours(0, 0, 0, 0);
+                  timeMin = nextMon.toISOString();
+                  timeMax = new Date(nextMon.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+                }
+
+                if (provider === "google") {
+                  const { searchGoogleCalendarEvents } = await import("@/lib/google-tools");
+                  const events = await searchGoogleCalendarEvents(accessToken, undefined, timeMin, timeMax, 15);
+                  if (events.length > 0) {
+                    connectorContext += `\n\n[CALENDAR_EVENTS — from user's Google Calendar]\n` +
+                      events.map((e, i) => `${i + 1}. "${e.summary}" | START: ${e.start} | END: ${e.end}${e.location ? ` | LOCATION: ${e.location}` : ""}${e.attendees?.length ? ` | ATTENDEES: ${e.attendees.join(", ")}` : ""}`).join("\n") +
+                      `\n[END_CALENDAR_EVENTS]`;
+                  } else {
+                    connectorContext += `\n\n[CALENDAR_EVENTS — No events found in the requested time range]\n`;
+                  }
+                } else {
+                  const { searchOutlookCalendarEvents } = await import("@/lib/microsoft-tools");
+                  const events = await searchOutlookCalendarEvents(accessToken, undefined, timeMin, timeMax, 15);
+                  if (events.length > 0) {
+                    connectorContext += `\n\n[CALENDAR_EVENTS — from user's Outlook Calendar]\n` +
+                      events.map((e, i) => `${i + 1}. "${e.summary}" | START: ${e.start} | END: ${e.end}${e.location ? ` | LOCATION: ${e.location}` : ""}${e.attendees?.length ? ` | ATTENDEES: ${e.attendees.join(", ")}` : ""}`).join("\n") +
+                      `\n[END_CALENDAR_EVENTS]`;
+                  } else {
+                    connectorContext += `\n\n[CALENDAR_EVENTS — No events found in the requested time range]\n`;
+                  }
+                }
+              }
+
+              if (isContactsIntent) {
+                const contactQuery = message.replace(/\b(find|search|look ?up|get|show|my|me|the|contact|contacts|phone|number|email|address|of|for|please|can you|what is|what's)\b/gi, '').trim();
+                if (provider === "google") {
+                  const { searchGoogleContacts } = await import("@/lib/google-tools");
+                  const contacts = await searchGoogleContacts(accessToken, contactQuery || "a", 10);
+                  if (contacts.length > 0) {
+                    connectorContext += `\n\n[CONTACTS_RESULTS — from user's Google Contacts]\n` +
+                      contacts.map((c, i) => `${i + 1}. ${c.name}${c.email ? ` | EMAIL: ${c.email}` : ""}${c.phone ? ` | PHONE: ${c.phone}` : ""}${c.organization ? ` | ORG: ${c.organization}` : ""}`).join("\n") +
+                      `\n[END_CONTACTS_RESULTS]`;
+                  } else {
+                    connectorContext += `\n\n[CONTACTS_RESULTS — No contacts found matching "${contactQuery}"]\n`;
+                  }
+                } else {
+                  const { searchOutlookContacts } = await import("@/lib/microsoft-tools");
+                  const contacts = await searchOutlookContacts(accessToken, contactQuery || "a", 10);
+                  if (contacts.length > 0) {
+                    connectorContext += `\n\n[CONTACTS_RESULTS — from user's Outlook Contacts]\n` +
+                      contacts.map((c, i) => `${i + 1}. ${c.name}${c.email ? ` | EMAIL: ${c.email}` : ""}${c.phone ? ` | PHONE: ${c.phone}` : ""}${c.organization ? ` | ORG: ${c.organization}` : ""}`).join("\n") +
+                      `\n[END_CONTACTS_RESULTS]`;
+                  } else {
+                    connectorContext += `\n\n[CONTACTS_RESULTS — No contacts found matching "${contactQuery}"]\n`;
+                  }
+                }
+              }
+
+              // Inject connector data into the last user message (same pattern as web search)
+              if (connectorContext) {
+                const last = chatMessages[chatMessages.length - 1];
+                if (last?.role === "user") {
+                  const ctx = `\n\n[INTERNAL_CONTEXT: The following is REAL data from the user's connected account. Present it clearly and helpfully. Do NOT say you cannot access their account — you already have the data below.]`;
+                  if (typeof last.content === "string") last.content += ctx + connectorContext;
+                  else if (Array.isArray(last.content)) last.content.push({ type: "text", text: ctx + connectorContext });
+                }
+                // Add instruction to system prompt
+                systemPrompt += `\n\nCONNECTOR DATA AVAILABLE: The user's message includes real data from their connected ${provider === "google" ? "Google" : "Microsoft"} account (emails, calendar, or contacts). Present this data clearly with good formatting. Do NOT mention searching or APIs — just present the information naturally as if you have direct access to their account.`;
+              }
             }
+          } catch (e) {
+            console.error("Connector fetch error:", e);
           }
-
-          // Clean up R2 files
-          for (const url of fileUrlsToDelete) {
-            try { await deleteFromR2(url); } catch (e) { console.error("R2 delete error:", e); }
-          }
-
-          // Prepend sources if available
-          if (sourcesForFrontend.length > 0) {
-            const sourcesLine = `\x00SOURCES:${JSON.stringify(sourcesForFrontend)}\x00\n`;
-            return new Response(sourcesLine + finalText, {
-              headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-            });
-          }
-
-          return new Response(textStream, {
-            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-          });
-        } catch (toolError) {
-          console.error("Tool-calling error, falling back to normal stream:", toolError);
-          // Fall through to normal streamText below
         }
       }
 
