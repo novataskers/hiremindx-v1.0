@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useSession } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
-import { Loader2, Search, Mic, MicOff, Copy, Check, Volume2, X, FileText, Image as ImageIcon, History, Plus, Trash2, Download, Mail, AlertCircle, Code, TrendingUp, Square, ChevronUp } from "lucide-react";
+import { Loader2, Search, Mic, MicOff, Copy, Check, Volume2, X, FileText, Image as ImageIcon, History, Plus, Trash2, Download, Mail, AlertCircle, Code, TrendingUp, Square, ChevronUp, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -52,6 +52,12 @@ interface UploadedFile {
   type: string;
   size: number;
   url: string;
+}
+
+interface UserLocation {
+  lat: number;
+  lng: number;
+  name?: string;
 }
 
 interface ChatSession {
@@ -406,6 +412,7 @@ function CodeBlock({ children, className, isDark }: { children: React.ReactNode;
           </code>
         </pre>
       </div>
+
     </div>
   );
 }
@@ -477,6 +484,10 @@ export default function AssistPage() {
   const [lastMessageSent, setLastMessageSent] = useState<string | null>(null);
   const [isStartingNewChat, setIsStartingNewChat] = useState(false);
 
+  // Location state
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
+  const [showLocationPrompt, setShowLocationPrompt] = useState(false);
+
   // Canvas state (Gemini-style right panel)
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasCode, setCanvasCode] = useState("");
@@ -511,6 +522,20 @@ export default function AssistPage() {
       localStorage.setItem('hiremind_assist_session_id', session.user.id);
     }
   }, [session]);
+
+  // Location permission check on mount
+  useEffect(() => {
+    const stored = localStorage.getItem('hiremindx_user_location');
+    const permission = localStorage.getItem('hiremindx_location_permission');
+
+    if (permission === 'granted' && stored) {
+      try {
+        setUserLocation(JSON.parse(stored));
+      } catch {}
+    } else if (!permission) {
+      setShowLocationPrompt(true);
+    }
+  }, []);
 
   // Fetch email token
   useEffect(() => {
@@ -1173,6 +1198,32 @@ export default function AssistPage() {
   };
 
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); sendMessage(input); };
+
+  const handleAllowLocation = () => {
+    if (!navigator.geolocation) {
+      setShowLocationPrompt(false);
+      localStorage.setItem('hiremindx_location_permission', 'denied');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const loc = { lat: position.coords.latitude, lng: position.coords.longitude };
+        setUserLocation(loc);
+        setShowLocationPrompt(false);
+        localStorage.setItem('hiremindx_user_location', JSON.stringify(loc));
+        localStorage.setItem('hiremindx_location_permission', 'granted');
+      },
+      () => {
+        setShowLocationPrompt(false);
+        localStorage.setItem('hiremindx_location_permission', 'denied');
+      }
+    );
+  };
+
+  const handleDenyLocation = () => {
+    setShowLocationPrompt(false);
+    localStorage.setItem('hiremindx_location_permission', 'denied');
+  };
 
   const handleDownloadDocument = async (content: string, type: 'pdf' | 'docx', messageId: string) => {
     setGeneratingDocId(messageId);
@@ -2011,6 +2062,40 @@ export default function AssistPage() {
            </div>
          )}
          </div>
+
+      {/* Location Permission Prompt */}
+      {showLocationPrompt && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className={`mx-4 w-full max-w-sm rounded-2xl border p-6 shadow-2xl ${isDark ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-gray-200'}`}>
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${isDark ? 'bg-zinc-800' : 'bg-gray-100'}`}>
+                <MapPin className={`w-6 h-6 ${isDark ? 'text-zinc-300' : 'text-gray-600'}`} />
+              </div>
+              <div>
+                <h3 className={`text-base font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Enable Location</h3>
+                <p className={`text-sm mt-1.5 leading-relaxed ${isDark ? 'text-zinc-400' : 'text-gray-500'}`}>
+                  Allow HireMindX to access your location for weather, local insights, and nearby recommendations.
+                </p>
+              </div>
+              <div className="flex flex-col w-full gap-2.5 pt-1">
+                <button
+                  onClick={handleAllowLocation}
+                  className="w-full py-2.5 rounded-xl text-sm font-medium bg-zinc-100 text-black hover:bg-white transition-colors"
+                >
+                  Allow Location Access
+                </button>
+                <button
+                  onClick={handleDenyLocation}
+                  className={`w-full py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-zinc-700 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200' : 'border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}
+                >
+                  Not Now
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
        </div>
      </div>
   );
