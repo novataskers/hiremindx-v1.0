@@ -112,7 +112,7 @@ export async function getGmailToken(userId: string): Promise<string | null> {
 
 /** Get a valid email token — prefers the account that can actually send email */
 export async function getEmailToken(userId: string): Promise<EmailToken | null> {
-  // Check which accounts exist and have email-sending scopes
+  // Check which accounts exist
   const accounts = await db.query.account.findMany({
     where: eq(account.userId, userId),
   });
@@ -120,29 +120,21 @@ export async function getEmailToken(userId: string): Promise<EmailToken | null> 
   const googleAccount = accounts.find(a => a.providerId === "google");
   const microsoftAccount = accounts.find(a => a.providerId === "microsoft");
 
-  const googleCanSend = googleAccount?.scope?.includes("gmail.send") ?? false;
-  // Microsoft scope stored by better-auth may not reflect actual granted scopes
-  // (better-auth doesn't update scope on re-login). Since our auth config always
-  // requests Mail.Send, trust that Microsoft accounts have it if the account exists.
-  const microsoftCanSend = !!microsoftAccount;
-
-  console.log(`[EmailToken] User ${userId} — Google account: ${!!googleAccount} (canSend: ${googleCanSend}), Microsoft account: ${!!microsoftAccount} (canSend: ${microsoftCanSend}), MS scope: ${microsoftAccount?.scope}`);
-
-  // Prefer the provider that can actually send email
-  // Microsoft is preferred when available since its scope is always requested
-  if (microsoftCanSend) {
-    const msToken = await getProviderToken(userId, "microsoft");
-    if (msToken) {
-      console.log(`[EmailToken] Using Microsoft provider for user ${userId}`);
-      return { accessToken: msToken, provider: "microsoft" };
-    }
-  }
-
-  if (googleCanSend) {
+  // Prefer Google if connected
+  if (googleAccount) {
     const googleToken = await getProviderToken(userId, "google");
     if (googleToken) {
       console.log(`[EmailToken] Using Google provider for user ${userId}`);
       return { accessToken: googleToken, provider: "google" };
+    }
+  }
+
+  // Fallback to Microsoft if connected
+  if (microsoftAccount) {
+    const msToken = await getProviderToken(userId, "microsoft");
+    if (msToken) {
+      console.log(`[EmailToken] Using Microsoft provider for user ${userId}`);
+      return { accessToken: msToken, provider: "microsoft" };
     }
   }
 
