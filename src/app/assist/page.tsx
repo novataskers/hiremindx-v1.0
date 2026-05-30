@@ -15,6 +15,7 @@ import { detectDocumentRequest, generateDocument, extractTitleFromContent } from
 import { authClient } from "@/lib/auth-client";
 import { MarketAgentCard } from "@/components/MarketAgentCard";
 import { PredictionCard } from "@/components/PredictionCard";
+import { WeatherCard } from "@/components/WeatherCard";
 import { DarkResearchCard } from "@/components/DarkResearchCard";
 import { DeepResearchCard } from "@/components/DeepResearchCard";
 import { AssistCanvas } from "@/components/AssistCanvas";
@@ -45,6 +46,9 @@ interface Message {
   isDarkResearch?: boolean;
   darkResearchPrompt?: string;
   isCanvas?: boolean;
+  isWeather?: boolean;
+  weatherPrompt?: string;
+  weatherLocation?: { lat: number; lng: number; name?: string };
 }
 
 interface UploadedFile {
@@ -326,6 +330,35 @@ function isCanvasEditIntent(text: string): boolean {
 
 
 // Detect if AI response is about a financial topic but user didn't trigger the market agent
+// Weather intent detection — triggers rich weather card
+function isWeatherIntent(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    // Direct weather queries
+    /\bweather\b/i.test(lower) ||
+    /\btemperature\b/i.test(lower) ||
+    /\bforecast\b/i.test(lower) ||
+    /\bwhat's the weather/i.test(lower) ||
+    /\bhow's the weather/i.test(lower) ||
+    /\bshow me.*weather/i.test(lower) ||
+    /\bweather today/i.test(lower) ||
+    /\bweather outside/i.test(lower) ||
+    /\bcurrent weather/i.test(lower) ||
+    // Implicit weather-related queries
+    /\bshould i take an umbrella/i.test(lower) ||
+    /\bdo i need a jacket/i.test(lower) ||
+    /\bshould i wear a jacket/i.test(lower) ||
+    /\bis it safe to go (outside|for a walk|walking)/i.test(lower) ||
+    /\bwill it rain/i.test(lower) ||
+    /\bis it (going to|gonna) rain/i.test(lower) ||
+    /\bcan i go (jogging|running|outside)/i.test(lower) ||
+    /\bshould i go outside/i.test(lower) ||
+    /\bis it (hot|cold|warm|freezing)/i.test(lower) ||
+    /\bhow hot is it/i.test(lower) ||
+    /\bhow cold is it/i.test(lower)
+  );
+}
+
 // Used to suggest the live agent at the end of a normal chat response
 // Only checks the user message, not the AI response — to avoid false positives
 // from generic words that appear in any AI response ("market", "buy", "price", etc.)
@@ -486,7 +519,6 @@ export default function AssistPage() {
 
   // Location state
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
-  const [showLocationPrompt, setShowLocationPrompt] = useState(false);
 
   // Canvas state (Gemini-style right panel)
   const [canvasOpen, setCanvasOpen] = useState(false);
@@ -523,17 +555,12 @@ export default function AssistPage() {
     }
   }, [session]);
 
-  // Location permission check on mount
+  // Restore saved location on mount
   useEffect(() => {
     const stored = localStorage.getItem('hiremindx_user_location');
     const permission = localStorage.getItem('hiremindx_location_permission');
-
     if (permission === 'granted' && stored) {
-      try {
-        setUserLocation(JSON.parse(stored));
-      } catch {}
-    } else if (!permission) {
-      setShowLocationPrompt(true);
+      try { setUserLocation(JSON.parse(stored)); } catch {}
     }
   }, []);
 
@@ -944,6 +971,36 @@ export default function AssistPage() {
         return;
       }
 
+      // Weather intent — triggers rich weather card
+      if (isWeatherIntent(userMessage) && !isOutreachIntent(userMessage) && !shouldUseCanvas) {
+        let weatherLoc = userLocation;
+        if (!weatherLoc) {
+          weatherLoc = await requestUserLocation();
+        }
+        const weatherMsg: Message = {
+          id: assistantMsgId,
+          role: "assistant",
+          content: `[Weather] ${userMessage}`,
+          timestamp: new Date(),
+          isStreaming: false,
+          isWeather: true,
+          weatherPrompt: userMessage,
+          weatherLocation: weatherLoc || undefined,
+        };
+        setMessages(prev => {
+          const next = [...prev, userMsg, weatherMsg];
+          setTimeout(() => saveCurrentSession(), 2000);
+          return next;
+        });
+        setInput("");
+        if (currentFiles.length > 0) deleteR2Files(currentFiles.map(f => f.url));
+        setUploadedFiles([]);
+        setAutoScroll(true);
+        setLastMessageSent(null);
+        setShowWelcome(false);
+        return;
+      }
+
     setMessages(prev => [...prev, userMsg, {
       id: assistantMsgId,
       role: "assistant",
@@ -1199,30 +1256,26 @@ export default function AssistPage() {
 
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); sendMessage(input); };
 
-  const handleAllowLocation = () => {
+  const requestUserLocation = () => {
     if (!navigator.geolocation) {
-      setShowLocationPrompt(false);
       localStorage.setItem('hiremindx_location_permission', 'denied');
-      return;
+      return Promise.resolve(null);
     }
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const loc = { lat: position.coords.latitude, lng: position.coords.longitude };
-        setUserLocation(loc);
-        setShowLocationPrompt(false);
-        localStorage.setItem('hiremindx_user_location', JSON.stringify(loc));
-        localStorage.setItem('hiremindx_location_permission', 'granted');
-      },
-      () => {
-        setShowLocationPrompt(false);
-        localStorage.setItem('hiremindx_location_permission', 'denied');
-      }
-    );
-  };
-
-  const handleDenyLocation = () => {
-    setShowLocationPrompt(false);
-    localStorage.setItem('hiremindx_location_permission', 'denied');
+    return new Promise<UserLocation | null>((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const loc = { lat: position.coords.latitude, lng: position.coords.longitude };
+          setUserLocation(loc);
+          localStorage.setItem('hiremindx_user_location', JSON.stringify(loc));
+          localStorage.setItem('hiremindx_location_permission', 'granted');
+          resolve(loc);
+        },
+        () => {
+          localStorage.setItem('hiremindx_location_permission', 'denied');
+          resolve(null);
+        }
+      );
+    });
   };
 
   const handleDownloadDocument = async (content: string, type: 'pdf' | 'docx', messageId: string) => {
@@ -1692,7 +1745,7 @@ export default function AssistPage() {
                         { label: "Live market analysis on Tesla stock", icon: TrendingUp },
                         { label: "Make me a simple portfolio website", icon: Code },
                         { label: "Write a cold outreach email for a software role", icon: Mail },
-                        { label: "When was Michael Jackson born?", icon: Search },
+                        { label: "What's the weather today?", icon: MapPin },
                       ].map((action) => (
                       <button
                         key={action.label}
@@ -1729,7 +1782,9 @@ export default function AssistPage() {
                         <div className="flex-1 min-w-0 pt-1">
                           {/* Market Agent Card — inline expanding panel */}
                           {/* Prediction Engine Card */}
-                          {message.isPrediction && message.predictionPrompt ? (
+                          {message.isWeather && message.weatherPrompt ? (
+                            <WeatherCard prompt={message.weatherPrompt} location={message.weatherLocation} />
+                          ) : message.isPrediction && message.predictionPrompt ? (
                             <PredictionCard prompt={message.predictionPrompt} />
                           ) : message.isDarkResearch && message.darkResearchPrompt ? (
                             <DeepResearchCard prompt={message.darkResearchPrompt} />
@@ -2062,39 +2117,6 @@ export default function AssistPage() {
            </div>
          )}
          </div>
-
-      {/* Location Permission Prompt */}
-      {showLocationPrompt && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className={`mx-4 w-full max-w-sm rounded-2xl border p-6 shadow-2xl ${isDark ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-gray-200'}`}>
-            <div className="flex flex-col items-center text-center space-y-4">
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${isDark ? 'bg-zinc-800' : 'bg-gray-100'}`}>
-                <MapPin className={`w-6 h-6 ${isDark ? 'text-zinc-300' : 'text-gray-600'}`} />
-              </div>
-              <div>
-                <h3 className={`text-base font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>Enable Location</h3>
-                <p className={`text-sm mt-1.5 leading-relaxed ${isDark ? 'text-zinc-400' : 'text-gray-500'}`}>
-                  Allow HireMindX to access your location for weather, local insights, and nearby recommendations.
-                </p>
-              </div>
-              <div className="flex flex-col w-full gap-2.5 pt-1">
-                <button
-                  onClick={handleAllowLocation}
-                  className="w-full py-2.5 rounded-xl text-sm font-medium bg-zinc-100 text-black hover:bg-white transition-colors"
-                >
-                  Allow Location Access
-                </button>
-                <button
-                  onClick={handleDenyLocation}
-                  className={`w-full py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-zinc-700 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200' : 'border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}
-                >
-                  Not Now
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
        </div>
      </div>
