@@ -1988,8 +1988,7 @@ export default function AssistPage() {
                             type="button"
                             onClick={isLoading ? stopGenerating : () => sendMessage(input)}
                             disabled={!isLoading && !input.trim() && uploadedFiles.length === 0}
-                            className={`w-8 h-8 flex items-center justify-center bg-zinc-100 text-black hover:bg-white transition-colors ${!isLoading ? 'disabled:opacity-30 disabled:cursor-not-allowed' : ''}`}
-                            style={{ clipPath: 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)' }}
+                            className={`p-2 rounded-full bg-zinc-100 text-black hover:bg-white transition-colors ${!isLoading ? 'disabled:opacity-30 disabled:cursor-not-allowed' : ''}`}
                             title={isLoading ? 'Stop generating' : 'Send message'}
                           >
                             {isLoading ? <Square className="w-4 h-4 fill-current" /> : <ChevronUp className="w-4 h-4" />}
