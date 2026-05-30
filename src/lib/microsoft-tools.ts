@@ -310,3 +310,68 @@ export async function searchOutlookContacts(
     organization: c.companyName,
   }));
 }
+
+// ─── Microsoft Tasks (To Do) ──────────────────────────────────────────────────
+
+export async function listMicrosoftTasks(
+  token: string,
+  maxResults = 20
+): Promise<{ id: string; title: string; status: string; due?: string; notes?: string }[]> {
+  // Get default list (first list)
+  const listsRes = await fetch(`${GRAPH_BASE}/todo/lists`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!listsRes.ok) throw new Error(`MS To Do lists failed: ${listsRes.status}`);
+  const listsData = await listsRes.json();
+  const defaultList = listsData.value?.[0]?.id;
+  if (!defaultList) return [];
+
+  const res = await fetch(`${GRAPH_BASE}/todo/lists/${defaultList}/tasks?$top=${maxResults}&$orderby=createdDateTime desc&$select=id,title,status,dueDateTime,body`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`MS To Do tasks failed: ${res.status}`);
+  const data = await res.json();
+
+  return (data.value || []).map((t: any) => ({
+    id: t.id,
+    title: t.title || "(No title)",
+    status: t.status || "notStarted",
+    due: t.dueDateTime?.dateTime,
+    notes: t.body?.content?.substring(0, 200),
+  }));
+}
+
+export async function createMicrosoftTask(
+  token: string,
+  title: string,
+  notes?: string,
+  due?: string
+): Promise<{ success: boolean; taskId?: string; error?: string }> {
+  const listsRes = await fetch(`${GRAPH_BASE}/todo/lists`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!listsRes.ok) return { success: false, error: `MS To Do lists failed: ${listsRes.status}` };
+  const listsData = await listsRes.json();
+  const defaultList = listsData.value?.[0]?.id;
+  if (!defaultList) return { success: false, error: "No task list found" };
+
+  const body: any = { title };
+  if (notes) body.body = { contentType: "Text", content: notes };
+  if (due) body.dueDateTime = { dateTime: due, timeZone: "UTC" };
+
+  try {
+    const res = await fetch(`${GRAPH_BASE}/todo/lists/${defaultList}/tasks`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      return { success: false, error: err };
+    }
+    const result = await res.json();
+    return { success: true, taskId: result.id };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}

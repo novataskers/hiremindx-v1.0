@@ -17,6 +17,7 @@ import { fetchFromR2, deleteFromR2 } from "@/lib/r2";
 import { hiremindState, researchSessions } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getEmailToken } from "@/lib/google-auth";
+import { createAssistTools } from "@/lib/assist-tools";
 import {
   type ConversationState,
   type EmailAttachment,
@@ -561,7 +562,7 @@ export async function POST(request: NextRequest) {
       let connectorStatusText = ""; // Perplexity-style status for frontend
       if (!isCanvasRequest && !isDocumentRequest && message) {
         const lower = message.toLowerCase();
-        const hasEmailIntent = /(emails?|e-?mails?|inbox|mails?\b|unread|message.?from|reply.?from|got.{0,10}reply|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail))/i.test(lower);
+        const hasEmailIntent = /(emails?|e-?mails?|inbox|mails?\b|unread|message.?from|reply.?from|repl(y|ies)|respond|response|follow-?up|follow ?up|got.{0,10}reply|heard.{0,10}back|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail)|reply.{0,5}to)/i.test(lower);
         const hasTaskIntent = /(\btasks?\b|\bto.?dos?\b|\btodo\b|add.{0,10}(task|todo|to-do)|create.{0,10}(task|todo|to-do)|my.{0,5}(tasks|to.?dos|todos)|show.{0,10}(tasks|to.?dos)|list.{0,10}(tasks|to.?dos)|pending.{0,5}(tasks|to.?dos))/i.test(lower);
         const hasCalendarIntent = !hasTaskIntent && /(cal[ae]n[dae]+[ae]r|calender|claendar|calandar|schedule[ds]?|sc?hedule|meetings?|mee?tings?|appointments?|appoint?ments?|events?\b|what.{0,15}(on|planned|happening|have)|busy|free\b|availab|today.{0,5}(schedule|cal|plan)|tomorrow|this week|next week|book.{0,10}(meeting|event)|reschedule|add.{0,10}(event|meeting|cal|appointment)|create.{0,10}(event|meeting)|set.{0,10}(reminder|meeting)|cancel.{0,10}(event|meeting)|what.{0,15}my.{0,10}(cal|schedule|agenda))/i.test(lower);
         const hasContactsIntent = /(contacts?\b|phone.?number|email.?address|look.?up.{0,10}(contact|person|number)|find.{0,10}(contact|number|phone)|directory)/i.test(lower) && !hasEmailIntent;
@@ -608,6 +609,7 @@ export async function POST(request: NextRequest) {
       }
 
     let systemPrompt = RESEARCH_SYSTEM_PROMPT;
+    let toolsForModel: ReturnType<typeof createAssistTools> | undefined;
 
     // ── Connector data is injected dynamically below if connector intent was detected ──
 
@@ -723,7 +725,7 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
       // ── Google/Microsoft Connector: full autonomous email/calendar/contacts ──
       if (connectorIntentDetected && message) {
         const lower = message.toLowerCase();
-        const isEmailIntent = /(emails?|e-?mails?|inbox|mails?\b|unread|message.?from|reply.?from|got.{0,10}reply|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail))/i.test(lower);
+        const isEmailIntent = /(emails?|e-?mails?|inbox|mails?\b|unread|message.?from|reply.?from|repl(y|ies)|respond|response|follow-?up|follow ?up|got.{0,10}reply|heard.{0,10}back|check.{0,10}(mail|email)|search.{0,10}(mail|email)|received|sent.{0,5}to|from.{0,15}@|send.{0,10}(email|mail)|draft.{0,10}(email|mail|reply)|compose|write.{0,10}(email|mail)|reply.{0,5}to)/i.test(lower);
         const isTaskIntent = /(\btasks?\b|\bto.?dos?\b|\btodo\b|add.{0,10}(task|todo|to-do)|create.{0,10}(task|todo|to-do)|my.{0,5}(tasks|to.?dos|todos)|show.{0,10}(tasks|to.?dos)|list.{0,10}(tasks|to.?dos)|pending.{0,5}(tasks|to.?dos))/i.test(lower);
         const isCalendarIntent = !isTaskIntent && /(cal[ae]n[dae]+[ae]r|calender|claendar|calandar|schedule[ds]?|sc?hedule|meetings?|mee?tings?|appointments?|appoint?ments?|events?\b|what.{0,15}(on|planned|happening|have)|busy|free\b|availab|today.{0,5}(schedule|cal|plan)|tomorrow|this week|next week|book.{0,10}(meeting|event)|reschedule|add.{0,10}(event|meeting|cal|appointment)|create.{0,10}(event|meeting)|set.{0,10}(reminder|meeting)|cancel.{0,10}(event|meeting)|what.{0,15}my.{0,10}(cal|schedule|agenda))/i.test(lower);
         const isContactsIntent = /(contacts?\b|phone.?number|email.?address|look.?up.{0,10}(contact|person|number)|find.{0,10}(contact|number|phone)|directory)/i.test(lower) && !isEmailIntent;
@@ -731,7 +733,7 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
         // Detect write vs read intent
         const isWriteCalendar = /(add|create|book|set|schedule|put|make|insert).{0,15}(event|meeting|appointment|calendar|reminder)/i.test(lower) || /(add.{0,5}to.{0,10}calendar|book.{0,5}a?.{0,5}meeting|schedule.{0,5}a?.{0,5}meeting)/i.test(lower);
         const isCancelCalendar = /(cancel|delete|remove).{0,15}(event|meeting|appointment)/i.test(lower);
-        const isSendEmail = /(send|compose|write|draft).{0,15}(email|mail|message|reply)/i.test(lower);
+        const isSendEmail = /(send|compose|write|draft|reply|respond|follow-?up|follow ?up).{0,25}(email|mail|message|reply|to\s)/i.test(lower) || /\breply\s+to\b/i.test(lower);
         const isWriteTask = /(add|create|make|set).{0,15}(task|todo|to-do|reminder)/i.test(lower);
 
         console.log(`[Connector] Intent — email:${isEmailIntent} cal:${isCalendarIntent} contacts:${isContactsIntent} task:${isTaskIntent} writeCalendar:${isWriteCalendar} cancelCal:${isCancelCalendar} sendEmail:${isSendEmail} writeTask:${isWriteTask} msg:"${message.substring(0, 80)}"`);
@@ -741,6 +743,8 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
           console.log(`[Connector] Token — provider:${connectorToken?.provider || "NONE"} hasToken:${!!connectorToken?.accessToken}`);
           if (connectorToken) {
             const { accessToken, provider } = connectorToken;
+            toolsForModel = createAssistTools(accessToken, provider);
+            systemPrompt += `\n\nTOOLS AVAILABLE: You can directly call structured tools to manage the user's email, calendar, contacts, and tasks. Use them when the user asks for real actions (search, send, draft, add event, list tasks, add task, lookup contacts).`;
             let connectorContext = "";
             const providerLabel = provider === "google" ? "Google" : "Microsoft";
 
@@ -758,7 +762,9 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
               } else if (subjectMatch) {
                 searchQuery = subjectMatch[1];
               } else {
-                searchQuery = message.replace(/\b(check|search|find|show|get|my|me|the|any|all|new|recent|latest|emails?|inbox|mails?\b|messages?|please|can you|did i|have i|got|if i|do i have|are there)\b/gi, '').trim() || "is:unread";
+                const stripped = message.replace(/\b(check|search|find|show|get|my|me|the|any|all|emails?|inbox|mails?\b|messages?|please|can you|did i|have i|got|if i|do i have|are there)\b/gi, '').trim();
+                searchQuery = stripped || (provider === "google" ? "newer_than:7d" : "");
+                if (!searchQuery) searchQuery = "recent";
               }
               console.log(`[Connector] Email search query: "${searchQuery}"`);
 
@@ -875,6 +881,13 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
                   eventParams = { summary: "", startDateTime: "", endDateTime: "" };
                 }
 
+                // Ensure end time fallback
+                if (eventParams.startDateTime && !eventParams.endDateTime) {
+                  const start = new Date(eventParams.startDateTime);
+                  const end = new Date(start.getTime() + 60 * 60 * 1000);
+                  eventParams.endDateTime = end.toISOString();
+                }
+
                 if (eventParams.summary && eventParams.startDateTime) {
                   console.log(`[Connector] Creating calendar event: ${eventParams.summary} at ${eventParams.startDateTime}`);
                   if (provider === "google") {
@@ -906,7 +919,7 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
               connectorStatusText = "Checking your calendar...";
               const now = new Date();
               let timeMin = new Date(now); timeMin.setHours(0, 0, 0, 0);
-              let timeMax = new Date(timeMin.getTime() + 24 * 60 * 60 * 1000);
+              let timeMax = new Date(timeMin.getTime() + 3 * 24 * 60 * 60 * 1000);
               if (/tomorrow/i.test(lower)) {
                 timeMin = new Date(now); timeMin.setDate(timeMin.getDate() + 1); timeMin.setHours(0, 0, 0, 0);
                 timeMax = new Date(timeMin.getTime() + 24 * 60 * 60 * 1000);
@@ -977,8 +990,8 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
               }
             }
 
-            // ── TASKS: Create or List ──
-            if (isTaskIntent && provider === "google") {
+            // ── TASKS: Create or List (Google or Microsoft) ──
+            if (isTaskIntent) {
               if (isWriteTask) {
                 connectorStatusText = "Adding your task...";
                 try {
@@ -1000,13 +1013,21 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
                   }
 
                   if (taskParams.title) {
-                    const { createGoogleTask } = await import("@/lib/google-tools");
-                    const dueISO = taskParams.due ? `${taskParams.due}T00:00:00.000Z` : undefined;
-                    const result = await createGoogleTask(accessToken, taskParams.title, taskParams.notes || undefined, dueISO);
-                    console.log(`[Connector] Google Tasks create result:`, result);
-                    connectorContext += result.success
-                      ? `\n\n[TASK_ACTION — Successfully created task in Google Tasks]\nTITLE: ${taskParams.title}${taskParams.due ? `\nDUE: ${taskParams.due}` : ""}${taskParams.notes ? `\nNOTES: ${taskParams.notes}` : ""}\n[Task has been added to your to-do list.]\n`
-                      : `\n\n[TASK_ACTION — Failed to create task: ${result.error}. The user may need to sign out and sign back in to grant Tasks permission.]\n`;
+                    if (provider === "google") {
+                      const { createGoogleTask } = await import("@/lib/google-tools");
+                      const dueISO = taskParams.due ? `${taskParams.due}T00:00:00.000Z` : undefined;
+                      const result = await createGoogleTask(accessToken, taskParams.title, taskParams.notes || undefined, dueISO);
+                      console.log(`[Connector] Google Tasks create result:`, result);
+                      connectorContext += result.success
+                        ? `\n\n[TASK_ACTION — Successfully created task in Google Tasks]\nTITLE: ${taskParams.title}${taskParams.due ? `\nDUE: ${taskParams.due}` : ""}${taskParams.notes ? `\nNOTES: ${taskParams.notes}` : ""}\n[Task has been added to your to-do list.]\n`
+                        : `\n\n[TASK_ACTION — Failed to create task: ${result.error}. The user may need to sign out and sign back in to grant Tasks permission.]\n`;
+                    } else {
+                      const result = await import("@/lib/microsoft-tools").then(m => m.createMicrosoftTask(accessToken, taskParams.title, taskParams.notes || undefined, taskParams.due ? `${taskParams.due}T00:00:00.000Z` : undefined));
+                      console.log(`[Connector] Microsoft Tasks create result:`, result);
+                      connectorContext += result.success
+                        ? `\n\n[TASK_ACTION — Successfully created task in Microsoft To Do]\nTITLE: ${taskParams.title}${taskParams.due ? `\nDUE: ${taskParams.due}` : ""}${taskParams.notes ? `\nNOTES: ${taskParams.notes}` : ""}\n[Task has been added to your to-do list.]\n`
+                        : `\n\n[TASK_ACTION — Failed to create task: ${result.error}. The user may need to sign out and sign back in to grant Tasks permission.]\n`;
+                    }
                   } else {
                     connectorContext += `\n\n[TASK_ACTION — Could not determine task details. Please specify what the task is.]\n`;
                   }
@@ -1017,14 +1038,24 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
               } else {
                 connectorStatusText = "Checking your tasks...";
                 try {
-                  const { listGoogleTasks } = await import("@/lib/google-tools");
-                  const tasks = await listGoogleTasks(accessToken, 20);
-                  console.log(`[Connector] Google Tasks returned ${tasks.length} tasks`);
-                  connectorContext += tasks.length > 0
-                    ? `\n\n[TASKS_RESULTS — from user's Google Tasks]\n` +
-                      tasks.map((t, i) => `${i + 1}. "${t.title}" | STATUS: ${t.status === "completed" ? "Done" : "Pending"}${t.due ? ` | DUE: ${t.due}` : ""}${t.notes ? ` | NOTES: ${t.notes}` : ""}`).join("\n") +
-                      `\n[END_TASKS_RESULTS]`
-                    : `\n\n[TASKS_RESULTS — No pending tasks found. The user's task list is empty.]\n`;
+                  if (provider === "google") {
+                    const { listGoogleTasks } = await import("@/lib/google-tools");
+                    const tasks = await listGoogleTasks(accessToken, 20);
+                    console.log(`[Connector] Google Tasks returned ${tasks.length} tasks`);
+                    connectorContext += tasks.length > 0
+                      ? `\n\n[TASKS_RESULTS — from user's Google Tasks]\n` +
+                        tasks.map((t, i) => `${i + 1}. "${t.title}" | STATUS: ${t.status === "completed" ? "Done" : "Pending"}${t.due ? ` | DUE: ${t.due}` : ""}${t.notes ? ` | NOTES: ${t.notes}` : ""}`).join("\n") +
+                        `\n[END_TASKS_RESULTS]`
+                      : `\n\n[TASKS_RESULTS — No pending tasks found. The user's task list is empty.]\n`;
+                  } else {
+                    const tasks = await import("@/lib/microsoft-tools").then(m => m.listMicrosoftTasks(accessToken, 20));
+                    console.log(`[Connector] Microsoft Tasks returned ${tasks.length} tasks`);
+                    connectorContext += tasks.length > 0
+                      ? `\n\n[TASKS_RESULTS — from user's Microsoft To Do]\n` +
+                        tasks.map((t, i) => `${i + 1}. "${t.title}" | STATUS: ${t.status === "completed" ? "Done" : "Pending"}${t.due ? ` | DUE: ${t.due}` : ""}${t.notes ? ` | NOTES: ${t.notes}` : ""}`).join("\n") +
+                        `\n[END_TASKS_RESULTS]`
+                      : `\n\n[TASKS_RESULTS — No pending tasks found. The user's task list is empty.]\n`;
+                  }
                 } catch (taskErr) {
                   console.error(`[Connector] Tasks list error:`, taskErr);
                   connectorContext += `\n\n[TASKS_ERROR — Failed to access tasks: ${taskErr instanceof Error ? taskErr.message : "unknown"}. The user may need to sign out and sign back in to grant Tasks permission.]\n`;
@@ -1057,6 +1088,7 @@ The user is editing EXISTING code that was previously generated. The EXISTING CO
         model: mistralStream(model),
         system: systemPrompt,
         messages: chatMessages,
+        tools: toolsForModel,
         maxOutputTokens: isCanvasRequest ? 16000 : 4096,
       });
 

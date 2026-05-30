@@ -27,6 +27,8 @@ import {
   updateOutlookCalendarEvent,
   deleteOutlookCalendarEvent,
   searchOutlookContacts,
+  listMicrosoftTasks,
+  createMicrosoftTask,
 } from "@/lib/microsoft-tools";
 
 export function createAssistTools(accessToken: string, provider: EmailProvider) {
@@ -223,6 +225,49 @@ export function createAssistTools(accessToken: string, provider: EmailProvider) 
           return { count: contacts.length, contacts };
         } catch (e) {
           return { error: String(e) };
+        }
+      },
+    }),
+
+    searchTasks: tool({
+      description: "List the user's pending tasks/to-dos (Google Tasks or Microsoft To Do).",
+      inputSchema: z.object({ maxResults: z.number().optional().describe("Max tasks to return (default 20)") }),
+      execute: async ({ maxResults: _maxResults }) => {
+        const maxResults = _maxResults ?? 20;
+        try {
+          if (provider === "google") {
+            const { listGoogleTasks } = await import("@/lib/google-tools");
+            const tasks = await listGoogleTasks(accessToken, maxResults);
+            return { count: tasks.length, tasks };
+          }
+          const tasks = await listMicrosoftTasks(accessToken, maxResults);
+          return { count: tasks.length, tasks };
+        } catch (e) {
+          return { error: String(e) };
+        }
+      },
+    }),
+
+    createTask: tool({
+      description: "Create a new task/to-do (Google Tasks or Microsoft To Do).",
+      inputSchema: z.object({
+        title: z.string().describe("Short task title"),
+        notes: z.string().optional().describe("Optional notes/details"),
+        due: z.string().optional().describe("Optional due date ISO string (YYYY-MM-DD or full ISO)"),
+      }),
+      execute: async ({ title, notes, due }) => {
+        try {
+          if (provider === "google") {
+            const { createGoogleTask } = await import("@/lib/google-tools");
+            // If due is date-only, add time for RFC3339
+            const dueISO = due ? (due.length === 10 ? `${due}T00:00:00.000Z` : due) : undefined;
+            const result = await createGoogleTask(accessToken, title, notes || undefined, dueISO);
+            return result;
+          }
+          const result = await createMicrosoftTask(accessToken, title, notes || undefined, due);
+          return result;
+        } catch (e) {
+          return { success: false, error: String(e) };
         }
       },
     }),

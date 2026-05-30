@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useSession } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
-import { Loader2, Send, Search, Mic, MicOff, Copy, Check, Volume2, Paperclip, X, FileText, Image as ImageIcon, History, Plus, Trash2, Download, Mail, AlertCircle, Code, TrendingUp, Square } from "lucide-react";
+import { Loader2, Search, Mic, MicOff, Copy, Check, Volume2, X, FileText, Image as ImageIcon, History, Plus, Trash2, Download, Mail, AlertCircle, Code, TrendingUp, Square, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -769,7 +769,18 @@ export default function AssistPage() {
       await authClient.signIn.social({
         provider: "google",
         callbackURL: "/assist",
-        scopes: ["openid", "email", "profile", "https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/contacts.readonly"],
+        scopes: [
+          "openid",
+          "email",
+          "profile",
+          "https://www.googleapis.com/auth/gmail.send",
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.modify",
+          "https://www.googleapis.com/auth/calendar",
+          "https://www.googleapis.com/auth/contacts.readonly",
+          "https://www.googleapis.com/auth/tasks",
+          "https://www.googleapis.com/auth/tasks.readonly",
+        ],
       });
     } catch {
       toast.error("Failed to connect Gmail. Please try again.");
@@ -781,7 +792,18 @@ export default function AssistPage() {
       await authClient.signIn.social({
         provider: "microsoft",
         callbackURL: "/assist",
-        scopes: ["openid", "profile", "email", "offline_access", "https://graph.microsoft.com/Mail.Send", "https://graph.microsoft.com/Mail.Read", "https://graph.microsoft.com/Mail.ReadWrite", "https://graph.microsoft.com/Calendars.ReadWrite", "https://graph.microsoft.com/Contacts.Read"],
+        scopes: [
+          "openid",
+          "profile",
+          "email",
+          "offline_access",
+          "https://graph.microsoft.com/Mail.Send",
+          "https://graph.microsoft.com/Mail.Read",
+          "https://graph.microsoft.com/Mail.ReadWrite",
+          "https://graph.microsoft.com/Calendars.ReadWrite",
+          "https://graph.microsoft.com/Contacts.Read",
+          "https://graph.microsoft.com/Tasks.ReadWrite",
+        ],
       });
     } catch {
       toast.error("Failed to connect Outlook. Please try again.");
@@ -1934,7 +1956,7 @@ export default function AssistPage() {
                           className="p-3 text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-50"
                           title="Attach image, PDF, DOC, TXT, HTML, JSON, code, or other supported file"
                         >
-                          {isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Paperclip className="w-5 h-5" />}
+                          {isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
                         </button>
 
                         <textarea
@@ -1966,10 +1988,11 @@ export default function AssistPage() {
                             type="button"
                             onClick={isLoading ? stopGenerating : () => sendMessage(input)}
                             disabled={!isLoading && !input.trim() && uploadedFiles.length === 0}
-                            className={`p-2 rounded-full bg-zinc-100 text-black hover:bg-white transition-colors ${!isLoading ? 'disabled:opacity-30 disabled:cursor-not-allowed' : ''}`}
+                            className={`w-8 h-8 flex items-center justify-center bg-zinc-100 text-black hover:bg-white transition-colors ${!isLoading ? 'disabled:opacity-30 disabled:cursor-not-allowed' : ''}`}
+                            style={{ clipPath: 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)' }}
                             title={isLoading ? 'Stop generating' : 'Send message'}
                           >
-                            {isLoading ? <Square className="w-4 h-4 fill-current" /> : <Send className="w-4 h-4" />}
+                            {isLoading ? <Square className="w-4 h-4 fill-current" /> : <ChevronUp className="w-4 h-4" />}
                           </button>
                         </div>
                       </div>
