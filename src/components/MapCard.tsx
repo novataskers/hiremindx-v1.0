@@ -3,24 +3,27 @@
 import { useEffect, useState, useRef } from "react";
 import {
   MapPin, Navigation, Footprints, Car, Bike, Clock, Loader2, AlertCircle,
-  Star, StarHalf, ArrowRight, ChevronRight
+  Star, StarHalf, ChevronRight
 } from "lucide-react";
 
-const LEAFLET_HIDE_CSS = `
-  .leaflet-control-attribution { display: none !important; }
-  .leaflet-control-zoom { border-radius: 10px !important; overflow: hidden !important; }
-  .leaflet-control-zoom a { background: rgba(0,0,0,0.6) !important; color: #fff !important; border: 1px solid rgba(255,255,255,0.1) !important; }
-  .leaflet-popup-content-wrapper { background: rgba(15,15,15,0.95) !important; color: #fff !important; border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 10px !important; }
-  .leaflet-popup-tip { background: rgba(15,15,15,0.95) !important; }
-  .custom-marker { background: transparent !important; border: none !important; }
-`;
+// MapLibre GL loaded dynamically to avoid SSR issues
+let maplibregl: any = null;
 
-let L: any = null;
-let MapContainer: any = null;
-let TileLayer: any = null;
-let Marker: any = null;
-let Popup: any = null;
-let Polyline: any = null;
+function injectMapLibreCSS() {
+  if (typeof document === "undefined" || document.getElementById("maplibre-css")) return;
+  const link = document.createElement("link");
+  link.id = "maplibre-css";
+  link.rel = "stylesheet";
+  link.href = "https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.css";
+  document.head.appendChild(link);
+}
+
+async function loadMapLibre() {
+  if (maplibregl) return;
+  injectMapLibreCSS();
+  const mod = await import("maplibre-gl");
+  maplibregl = mod.default || mod;
+}
 
 interface MapLocation {
   lat: number;
@@ -62,18 +65,6 @@ interface MapCardProps {
   location?: MapLocation;
   destination?: MapLocation;
   onContextResolved?: (ctx: { destinationName?: string; destinationCoords?: { lat: number; lng: number }; poiType?: string }) => void;
-}
-
-async function loadLeaflet() {
-  if (L && MapContainer) return;
-  const leaflet = await import("leaflet");
-  const reactLeaflet = await import("react-leaflet");
-  L = leaflet.default || leaflet;
-  MapContainer = reactLeaflet.MapContainer;
-  TileLayer = reactLeaflet.TileLayer;
-  Marker = reactLeaflet.Marker;
-  Popup = reactLeaflet.Popup;
-  Polyline = reactLeaflet.Polyline;
 }
 
 function formatDuration(seconds: number): string {
@@ -122,22 +113,24 @@ function StarRating({ rating }: { rating: number }) {
   );
 }
 
-function createMarkerIcon(type: "user" | "destination" | "poi") {
-  if (!L) return undefined;
+function createMarkerEl(type: "user" | "destination" | "poi") {
   const colors = {
     user: { bg: "#3b82f6", ring: "rgba(59,130,246,0.35)", size: 18 },
     destination: { bg: "#ef4444", ring: "rgba(239,68,68,0.35)", size: 18 },
     poi: { bg: "#a855f7", ring: "rgba(168,85,247,0.35)", size: 14 },
   };
   const c = colors[type];
-  const html = `
-    <div style="position:relative;width:${c.size + 8}px;height:${c.size + 8}px;display:flex;align-items:center;justify-content:center;">
-      <div style="width:${c.size}px;height:${c.size}px;border-radius:50%;background:${c.bg};border:2.5px solid white;box-shadow:0 0 0 3px ${c.ring},0 4px 12px rgba(0,0,0,0.4);animation:markerPop 0.5s cubic-bezier(0.34,1.56,0.64,1);"></div>
-      ${type === "user" ? `<div style="position:absolute;width:5px;height:5px;background:white;border-radius:50%;"></div>` : ""}
-    </div>
-    <style>@keyframes markerPop{0%{transform:scale(0)}70%{transform:scale(1.15)}100%{transform:scale(1)}}</style>
-  `;
-  return new L.DivIcon({ className: "custom-marker", html, iconSize: [c.size + 8, c.size + 8], iconAnchor: [(c.size + 8) / 2, (c.size + 8) / 2] });
+  const el = document.createElement("div");
+  el.style.cssText = `position:relative;width:${c.size + 8}px;height:${c.size + 8}px;display:flex;align-items:center;justify-content:center;`;
+  const dot = document.createElement("div");
+  dot.style.cssText = `width:${c.size}px;height:${c.size}px;border-radius:50%;background:${c.bg};border:2.5px solid white;box-shadow:0 0 0 3px ${c.ring},0 4px 12px rgba(0,0,0,0.4);`;
+  el.appendChild(dot);
+  if (type === "user") {
+    const inner = document.createElement("div");
+    inner.style.cssText = "position:absolute;width:5px;height:5px;background:white;border-radius:50%;";
+    el.appendChild(inner);
+  }
+  return el;
 }
 
 export function MapCard({ prompt, location, destination, onContextResolved }: MapCardProps) {
@@ -145,14 +138,15 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedMode, setSelectedMode] = useState<string | null>(null);
-  const [mapReady, setMapReady] = useState(false);
   const [activePlace, setActivePlace] = useState<number | null>(null);
-  const mapRef = useRef<any>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
 
   useEffect(() => {
     const fetchMaps = async () => {
       try {
-        await loadLeaflet();
+        await loadMapLibre();
         const body: any = { prompt };
         if (location) {
           body.lat = location.lat;
@@ -175,7 +169,6 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
         if (result.routes?.length > 0) {
           setSelectedMode(result.routes[0].mode);
         }
-        // Report context back to parent for follow-up queries
         if (onContextResolved) {
           onContextResolved({
             destinationName: result.destination?.name || result.classification?.destination,
@@ -187,29 +180,137 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
         setError(e.message || "Failed to fetch location data");
       } finally {
         setLoading(false);
-        setMapReady(true);
       }
     };
     fetchMaps();
   }, [prompt, location, destination, onContextResolved]);
 
-  // Fit map bounds when data loads
+  // Initialize MapLibre map when data is ready
   useEffect(() => {
-    if (!mapReady || !data || !mapRef.current || !L) return;
-    const bounds: any[] = [];
-    if (data.userLocation) bounds.push([data.userLocation.lat, data.userLocation.lng]);
-    if (data.destination) bounds.push([data.destination.lat, data.destination.lng]);
-    data.places.forEach((p) => bounds.push([p.lat, p.lng]));
-    if (bounds.length > 0) {
-      setTimeout(() => {
-        mapRef.current?.fitBounds(L.latLngBounds(bounds), { padding: [40, 40], maxZoom: 16 });
-      }, 100);
+    if (!data || !mapContainerRef.current || !maplibregl) return;
+
+    const centerLng = data.userLocation?.lng ?? data.destination?.lng ?? 90.4125;
+    const centerLat = data.userLocation?.lat ?? data.destination?.lat ?? 23.8103;
+
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: "https://tiles.openfreemap.org/styles/dark",
+      center: [centerLng, centerLat],
+      zoom: 14,
+      pitch: 50,
+      bearing: -10,
+      attributionControl: false,
+      dragRotate: true,
+      touchPitch: true,
+    });
+
+    mapInstanceRef.current = map;
+
+    map.on("load", () => {
+      // Add 3D building extrusions with fake heights for consistent 3D look
+      map.addLayer({
+        id: "3d-buildings",
+        source: "openmaptiles",
+        "source-layer": "building",
+        type: "fill-extrusion",
+        minzoom: 12,
+        paint: {
+          "fill-extrusion-color": "#1e293b",
+          "fill-extrusion-height": [
+            "case",
+            [">", ["get", "render_height"], 0],
+            ["get", "render_height"],
+            [">", ["get", "height"], 0],
+            ["get", "height"],
+            15,
+          ],
+          "fill-extrusion-base": 0,
+          "fill-extrusion-opacity": 0.85,
+          "fill-extrusion-vertical-gradient": true,
+          "fill-extrusion-ambient-occlusion-ground-radius": 3,
+        },
+      });
+
+      // Add route line if available
+      const activeRoute = data.routes[0];
+      if (activeRoute?.geometry) {
+        try {
+          const parsed = JSON.parse(activeRoute.geometry);
+          if (Array.isArray(parsed)) {
+            const coords = parsed.map((c: any) => [c[0], c[1]]); // OSRM returns [lng, lat]
+            map.addSource("route", {
+              type: "geojson",
+              data: {
+                type: "Feature",
+                properties: {},
+                geometry: { type: "LineString", coordinates: coords },
+              },
+            });
+            map.addLayer({
+              id: "route-line",
+              type: "line",
+              source: "route",
+              layout: { "line-join": "round", "line-cap": "round" },
+              paint: { "line-color": "#10b981", "line-width": 5, "line-opacity": 0.9 },
+            });
+          }
+        } catch { /* ignore */ }
+      }
+
+      // Add markers
+      const markers: any[] = [];
+      if (data.userLocation) {
+        const el = createMarkerEl("user");
+        const m = new maplibregl.Marker({ element: el }).setLngLat([data.userLocation.lng, data.userLocation.lat]).addTo(map);
+        markers.push(m);
+      }
+      if (data.destination) {
+        const el = createMarkerEl("destination");
+        const m = new maplibregl.Marker({ element: el }).setLngLat([data.destination.lng, data.destination.lat]).addTo(map);
+        markers.push(m);
+      }
+      data.places.forEach((p) => {
+        const el = createMarkerEl("poi");
+        const m = new maplibregl.Marker({ element: el }).setLngLat([p.lng, p.lat]).addTo(map);
+        markers.push(m);
+      });
+      markersRef.current = markers;
+
+      // Fit bounds
+      const bounds = new maplibregl.LngLatBounds();
+      if (data.userLocation) bounds.extend([data.userLocation.lng, data.userLocation.lat]);
+      if (data.destination) bounds.extend([data.destination.lng, data.destination.lat]);
+      data.places.forEach((p) => bounds.extend([p.lng, p.lat]));
+      if (!bounds.isEmpty()) {
+        map.fitBounds(bounds, { padding: 60, maxZoom: 16, duration: 800 });
+      }
+    });
+
+    return () => {
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
+      map.remove();
+      mapInstanceRef.current = null;
+    };
+  }, [data]);
+
+  // Fly to active place when card is clicked
+  useEffect(() => {
+    if (activePlace !== null && data?.places[activePlace] && mapInstanceRef.current) {
+      const p = data.places[activePlace];
+      mapInstanceRef.current.flyTo({
+        center: [p.lng, p.lat],
+        zoom: 16,
+        speed: 1.5,
+        curve: 1.2,
+        pitch: 55,
+      });
     }
-  }, [mapReady, data]);
+  }, [activePlace, data]);
 
   if (loading) {
     return (
-      <div className="rounded-2xl border border-white/[0.06] overflow-hidden" style={{ perspective: "1200px", background: "linear-gradient(180deg, rgba(6,30,20,0.6) 0%, rgba(0,0,0,0.85) 100%)", backdropFilter: "blur(20px)" }}>
+      <div className="rounded-2xl border border-white/[0.08] overflow-hidden relative" style={{ perspective: "1400px", background: "linear-gradient(180deg, rgba(8,20,14,0.55) 0%, rgba(2,6,4,0.9) 100%)", backdropFilter: "blur(24px)" }}>
         <div className="p-4">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center animate-pulse border border-emerald-500/20">
@@ -220,7 +321,7 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
               <p className="text-xs text-zinc-500">Finding places near you</p>
             </div>
           </div>
-          <div className="h-64 rounded-xl bg-white/5 animate-pulse" />
+          <div className="h-72 rounded-xl bg-white/5 animate-pulse" />
         </div>
       </div>
     );
@@ -237,33 +338,6 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
     );
   }
 
-  const hasMap = data.userLocation || data.destination || data.places.length > 0;
-  const activeRoute = data.routes.find((r) => r.mode === selectedMode);
-
-  // Build route coordinates if geometry exists
-  const routeCoords: [number, number][] = [];
-  if (activeRoute?.geometry) {
-    try {
-      // OSRM returns GeoJSON LineString coordinates as [lng, lat] pairs
-      const parsed = JSON.parse(activeRoute.geometry);
-      if (Array.isArray(parsed)) {
-        routeCoords.push(...parsed.map((c: any) => [c[1], c[0]] as [number, number]));
-      }
-    } catch {
-      // If geometry isn't valid JSON, skip polyline
-    }
-  }
-
-  const userIcon = createMarkerIcon("user");
-  const destIcon = createMarkerIcon("destination");
-  const poiIcon = createMarkerIcon("poi");
-
-  const defaultCenter: [number, number] = data.userLocation
-    ? [data.userLocation.lat, data.userLocation.lng]
-    : data.destination
-    ? [data.destination.lat, data.destination.lng]
-    : [23.8103, 90.4125];
-
   const isNearbyQuery = data.classification.type === "nearby";
   const isDirectionsQuery = data.classification.type === "directions" || data.classification.type === "distance";
 
@@ -276,7 +350,6 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
         backdropFilter: "blur(24px)",
       }}
     >
-      <style>{LEAFLET_HIDE_CSS}</style>
       <div className="absolute inset-0 rounded-2xl pointer-events-none"
         style={{ boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 0 40px rgba(16,185,129,0.08), 0 8px 32px rgba(0,0,0,0.4)" }} />
 
@@ -298,57 +371,20 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
         </div>
       </div>
 
-      {/* 3D Map */}
-      {hasMap && mapReady && MapContainer && (
-        <div className="px-4 pb-3">
-          <div
-            className="rounded-xl overflow-hidden border border-white/[0.08] relative"
-            style={{
-              height: "320px",
-              transform: "rotateX(3deg)",
-              transformStyle: "preserve-3d",
-              boxShadow: "0 22px 55px rgba(0,0,0,0.55), 0 10px 32px rgba(16,185,129,0.14), 0 0 0 1px rgba(255,255,255,0.05)",
-            }}
-          >
-            <MapContainer
-              center={defaultCenter}
-              zoom={14}
-              scrollWheelZoom={true}
-              attributionControl={false}
-              zoomControl={true}
-              style={{ height: "100%", width: "100%", background: "#050708" }}
-              ref={mapRef}
-            >
-              <TileLayer
-                url="https://stamen-tiles.a.ssl.fastly.net/toner/{z}/{x}/{y}.png"
-              />
-              {data.userLocation && (
-                <Marker position={[data.userLocation.lat, data.userLocation.lng]} icon={userIcon}>
-                  <Popup><span className="text-xs font-medium text-white">You are here</span></Popup>
-                </Marker>
-              )}
-              {data.destination && (
-                <Marker position={[data.destination.lat, data.destination.lng]} icon={destIcon}>
-                  <Popup><span className="text-xs font-medium text-white">{data.destination.name}</span></Popup>
-                </Marker>
-              )}
-              {data.places.map((p, i) => (
-                <Marker key={i} position={[p.lat, p.lng]} icon={poiIcon}>
-                  <Popup>
-                    <div className="text-xs">
-                      <p className="font-medium text-white">{p.name}</p>
-                      {p.distance && <p className="text-zinc-400">{p.distance}m away</p>}
-                    </div>
-                  </Popup>
-                </Marker>
-              ))}
-              {routeCoords.length > 1 && (
-                <Polyline positions={routeCoords} pathOptions={{ color: "#10b981", weight: 5, opacity: 0.85, lineCap: "round", lineJoin: "round" }} />
-              )}
-            </MapContainer>
-          </div>
+      {/* 3D Map — MapLibre GL */}
+      <div className="px-4 pb-3">
+        <div
+          className="rounded-xl overflow-hidden border border-white/[0.08] relative"
+          style={{
+            height: "320px",
+            transform: "rotateX(3deg)",
+            transformStyle: "preserve-3d",
+            boxShadow: "0 22px 55px rgba(0,0,0,0.55), 0 10px 32px rgba(16,185,129,0.14), 0 0 0 1px rgba(255,255,255,0.05)",
+          }}
+        >
+          <div ref={mapContainerRef} className="w-full h-full" style={{ background: "#050708" }} />
         </div>
-      )}
+      </div>
 
       {/* Big Route Stats */}
       {data.routes.length > 0 && (

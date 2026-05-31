@@ -162,11 +162,14 @@ function resolvePOITags(queryType: string): string[] {
 async function searchNearby(
   lat: number, lng: number, queryType: string
 ): Promise<{ name: string; lat: number; lng: number; type: string; address?: string; distance?: number }[]> {
-  const radius = 1500; // meters — expanded radius for better coverage
+  const radius = 5000; // meters — wider for suburban coverage
   const tags = resolvePOITags(queryType);
 
-  const tagQueries = tags.map((t) => `node(around:${radius},${lat},${lng})[${t}];`).join("");
-  const overpassQuery = `[out:json];${tagQueries}out body;`;
+  // Search nodes, ways, and relations; use `out center` to get center coords for ways/relations
+  const tagQueries = tags
+    .map((t) => `node(around:${radius},${lat},${lng})[${t}];way(around:${radius},${lat},${lng})[${t}];relation(around:${radius},${lat},${lng})[${t}];`)
+    .join("");
+  const overpassQuery = `[out:json][timeout:25];(${tagQueries});out body center;`;
 
   try {
     const res = await fetch("https://overpass-api.de/api/interpreter", {
@@ -177,15 +180,23 @@ async function searchNearby(
     if (!res.ok) return [];
     const data = await res.json();
     const elements = (data?.elements || [])
-      .filter((e: any) => e.lat && e.lon && e.tags?.name)
-      .map((e: any) => ({
-        name: e.tags.name,
-        lat: e.lat,
-        lng: e.lon,
-        type: e.tags.amenity || e.tags.leisure || e.tags.shop || e.tags.tourism || e.tags.railway || e.tags.highway || "place",
-        address: [e.tags["addr:street"], e.tags["addr:housenumber"], e.tags["addr:city"]].filter(Boolean).join(", ") || undefined,
-        distance: Math.round(haversineKm(lat, lng, e.lat, e.lon) * 1000),
-      }))
+      .filter((e: any) => {
+        const elLat = e.lat ?? e.center?.lat;
+        const elLon = e.lon ?? e.center?.lon;
+        return elLat && elLon && e.tags?.name;
+      })
+      .map((e: any) => {
+        const elLat = e.lat ?? e.center?.lat;
+        const elLon = e.lon ?? e.center?.lon;
+        return {
+          name: e.tags.name,
+          lat: elLat,
+          lng: elLon,
+          type: e.tags.amenity || e.tags.leisure || e.tags.shop || e.tags.tourism || e.tags.railway || e.tags.highway || "place",
+          address: [e.tags["addr:street"], e.tags["addr:housenumber"], e.tags["addr:city"]].filter(Boolean).join(", ") || undefined,
+          distance: Math.round(haversineKm(lat, lng, elLat, elLon) * 1000),
+        };
+      })
       .sort((a: any, b: any) => (a.distance || 0) - (b.distance || 0))
       .slice(0, 8);
     return elements;
