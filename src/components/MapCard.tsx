@@ -269,11 +269,11 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
 
   return (
     <div
-      className="rounded-2xl border border-white/[0.06] overflow-hidden relative"
+      className="rounded-2xl border border-white/[0.08] overflow-hidden relative"
       style={{
-        perspective: "1200px",
-        background: "linear-gradient(180deg, rgba(6,30,20,0.6) 0%, rgba(0,0,0,0.85) 100%)",
-        backdropFilter: "blur(20px)",
+        perspective: "1800px",
+        background: "linear-gradient(180deg, rgba(18,41,30,0.4) 0%, rgba(4,10,6,0.75) 100%)",
+        backdropFilter: "blur(28px)",
       }}
     >
       <style>{LEAFLET_HIDE_CSS}</style>
@@ -302,12 +302,12 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
       {hasMap && mapReady && MapContainer && (
         <div className="px-4 pb-3">
           <div
-            className="rounded-xl overflow-hidden border border-white/[0.06] relative"
+            className="rounded-xl overflow-hidden border border-white/[0.08] relative"
             style={{
               height: "280px",
-              transform: "rotateX(1deg)",
+              transform: "rotateX(6deg)",
               transformStyle: "preserve-3d",
-              boxShadow: "0 20px 50px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04)",
+              boxShadow: "0 26px 60px rgba(0,0,0,0.5), 0 12px 40px rgba(16,185,129,0.18), 0 0 0 1px rgba(255,255,255,0.06)",
             }}
           >
             <MapContainer
@@ -316,11 +316,11 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
               scrollWheelZoom={true}
               attributionControl={false}
               zoomControl={true}
-              style={{ height: "100%", width: "100%", background: "#0a0a0a" }}
+              style={{ height: "100%", width: "100%", background: "#e9edf5" }}
               ref={mapRef}
             >
               <TileLayer
-                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
               />
               {data.userLocation && (
                 <Marker position={[data.userLocation.lat, data.userLocation.lng]} icon={userIcon}>
@@ -412,12 +412,21 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
                     )}
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
-                    <span className="text-[10px] font-bold text-emerald-400">{p.distance}m</span>
+                    <span className="text-[10px] font-bold text-emerald-400">{p.distance ? `${p.distance}m` : "nearby"}</span>
                     <ChevronRight className="w-3.5 h-3.5 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
                   </div>
                 </button>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Empty nearby state */}
+      {data.places.length === 0 && (
+        <div className="px-4 pb-4">
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-3 text-xs text-zinc-400">
+            No nearby places were returned for this query. Try a different category like "nearest restaurant" or move the map.
           </div>
         </div>
       )}
