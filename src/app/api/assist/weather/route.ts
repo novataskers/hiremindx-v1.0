@@ -13,6 +13,28 @@ interface WeatherParams {
   prompt: string;
 }
 
+async function geocodeLocation(query: string): Promise<{ lat: number; lng: number; name: string } | null> {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+  try {
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(trimmed)}&count=1&language=en&format=json`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.results?.length > 0) {
+      const first = data.results[0];
+      return {
+        lat: first.latitude,
+        lng: first.longitude,
+        name: first.name + (first.country ? `, ${first.country}` : ""),
+      };
+    }
+  } catch (err) {
+    console.error("Geocoding error:", err);
+  }
+  return null;
+}
+
 function formatTime(isoString: string): string {
   const date = new Date(isoString);
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
@@ -84,12 +106,22 @@ export async function POST(req: NextRequest) {
 
     let latitude = lat;
     let longitude = lng;
+    let locationName = "Current Location";
 
-    // Default to Dhaka if no location provided
-    const hasProvidedLocation = !!(lat && lng);
+    // If user asked for a specific place, try geocoding the prompt
+    const geocoded = await geocodeLocation(prompt);
+    if (geocoded) {
+      latitude = geocoded.lat;
+      longitude = geocoded.lng;
+      locationName = geocoded.name;
+    }
+
+    // Default to Dhaka if no location provided/resolved
+    const hasProvidedLocation = !!(latitude && longitude);
     if (!hasProvidedLocation) {
       latitude = 23.8103;
       longitude = 90.4125;
+      locationName = "Default: Dhaka";
     }
 
     // Fetch from Open-Meteo
@@ -134,9 +166,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Get current hour index for humidity
-    const currentHourIndex = currentHour;
-    const humidity = hourly.relativehumidity_2m[currentHourIndex] || 60;
-    const rainChance = hourly.precipitation_probability[currentHourIndex] || 0;
+    const currentTimeIso = current?.time || hourly.time[0];
+    const currentHourIndex = hourly.time.findIndex((t: string) => t === currentTimeIso);
+    const humidity = hourly.relativehumidity_2m[currentHourIndex >= 0 ? currentHourIndex : 0] || 60;
+    const rainChance = hourly.precipitation_probability[currentHourIndex >= 0 ? currentHourIndex : 0] || 0;
 
     const recommendation = generateRecommendation(
       current.temperature,
@@ -162,7 +195,7 @@ export async function POST(req: NextRequest) {
       hourly: hourlyForecast,
       daily: dailyForecast,
       recommendation,
-      locationName: hasProvidedLocation ? "Current Location" : "Default: Dhaka",
+      locationName,
     });
   } catch (e: any) {
     console.error("Weather API error:", e);
