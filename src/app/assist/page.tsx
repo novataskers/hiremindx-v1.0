@@ -16,6 +16,7 @@ import { authClient } from "@/lib/auth-client";
 import { MarketAgentCard } from "@/components/MarketAgentCard";
 import { PredictionCard } from "@/components/PredictionCard";
 import { WeatherCard } from "@/components/WeatherCard";
+import { MapCard } from "@/components/MapCard";
 import { DarkResearchCard } from "@/components/DarkResearchCard";
 import { DeepResearchCard } from "@/components/DeepResearchCard";
 import { AssistCanvas } from "@/components/AssistCanvas";
@@ -49,6 +50,10 @@ interface Message {
   isWeather?: boolean;
   weatherPrompt?: string;
   weatherLocation?: { lat: number; lng: number; name?: string };
+  isLocationMap?: boolean;
+  mapPrompt?: string;
+  mapLocation?: { lat: number; lng: number; name?: string };
+  mapDestination?: { lat: number; lng: number; name?: string };
 }
 
 interface UploadedFile {
@@ -362,6 +367,47 @@ function isWeatherIntent(text: string): boolean {
 // Used to suggest the live agent at the end of a normal chat response
 // Only checks the user message, not the AI response — to avoid false positives
 // from generic words that appear in any AI response ("market", "buy", "price", etc.)
+// Location intent detection — triggers rich map card
+function isLocationIntent(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    // Direct location queries
+    /\bwhere\s+am\s+i\b/i.test(lower) ||
+    /\bwhere\s+is\s+my\s+(current\s+)?location\b/i.test(lower) ||
+    /\bshow\s+me\s+my\s+location\b/i.test(lower) ||
+    /\bshow\s+my\s+location\b/i.test(lower) ||
+    /\bwhat['\s]+s\s+my\s+location\b/i.test(lower) ||
+    /\bwhat['\s]+s\s+near\s+me\b/i.test(lower) ||
+    /\bwhat['\s]+s\s+around\s+(me|here)\b/i.test(lower) ||
+    // Directions / route
+    /\bdirections?\s+(?:to\s+)?/i.test(lower) ||
+    /\bhow\s+(?:do\s+i|to)\s+(?:get|go)\s+(?:to\s+)?/i.test(lower) ||
+    /\bnavigate\s+(?:to\s+)?/i.test(lower) ||
+    /\broute\s+(?:to\s+)?/i.test(lower) ||
+    /\bshow\s+me\s+the\s+way\s+(?:to\s+)?/i.test(lower) ||
+    // Distance
+    /\bhow\s+far\s+(?:is|am\s+i)\s+(?:from\s+)?/i.test(lower) ||
+    /\bdistance\s+(?:to|from)\s+/i.test(lower) ||
+    // Nearby / nearest
+    /\bnearest\b/i.test(lower) ||
+    /\bclosest\b/i.test(lower) ||
+    /\bnearby\b/i.test(lower) ||
+    /\bfind\s+nearby\b/i.test(lower) ||
+    /\bnear\s+me\b/i.test(lower) ||
+    /\bis\s+there\s+a\s+\w+\s+nearby\b/i.test(lower) ||
+    /\bwhere['\s]+s\s+the\s+nearest\b/i.test(lower) ||
+    // Travel time / mode follow-ups
+    /\bcan\s+i\s+walk\s+(?:there|to\s+it)\b/i.test(lower) ||
+    /\bhow\s+long\s+will\s+it\s+take\b/i.test(lower) ||
+    /\bhow\s+long\s+to\s+(?:get|go)\b/i.test(lower) ||
+    /\bwalking\s+(?:distance|time)\b/i.test(lower) ||
+    /\bdriving\s+(?:distance|time)\b/i.test(lower) ||
+    // Generic map trigger
+    /\bshow\s+me\s+on\s+a\s+map\b/i.test(lower) ||
+    /\bmap\s+(?:of|showing)\b/i.test(lower)
+  );
+}
+
 function isMarketRelatedResponse(userMsg: string, _aiResponse: string): boolean {
   const lower = userMsg.toLowerCase();
   // Must mention a specific named asset
@@ -959,6 +1005,33 @@ export default function AssistPage() {
         setMessages(prev => {
           const next = [...prev, userMsg, marketMsg];
           // Explicitly schedule save after state settles
+          setTimeout(() => saveCurrentSession(), 2000);
+          return next;
+        });
+        setInput("");
+        if (currentFiles.length > 0) deleteR2Files(currentFiles.map(f => f.url));
+        setUploadedFiles([]);
+        setAutoScroll(true);
+        setLastMessageSent(null);
+        setShowWelcome(false);
+        return;
+      }
+
+      // Location / Maps intent — triggers rich map card
+      if (isLocationIntent(userMessage) && !isOutreachIntent(userMessage) && !shouldUseCanvas) {
+        const mapLoc = await requestUserLocation();
+        const mapMsg: Message = {
+          id: assistantMsgId,
+          role: "assistant",
+          content: `[Map] ${userMessage}`,
+          timestamp: new Date(),
+          isStreaming: false,
+          isLocationMap: true,
+          mapPrompt: userMessage,
+          mapLocation: mapLoc || undefined,
+        };
+        setMessages(prev => {
+          const next = [...prev, userMsg, mapMsg];
           setTimeout(() => saveCurrentSession(), 2000);
           return next;
         });
@@ -1743,6 +1816,7 @@ export default function AssistPage() {
                         { label: "Make me a simple portfolio website", icon: Code },
                         { label: "Write a cold outreach email for a software role", icon: Mail },
                         { label: "What's the weather today?", icon: MapPin },
+                        { label: "Where am I?", icon: MapPin },
                       ].map((action) => (
                       <button
                         key={action.label}
@@ -1779,7 +1853,9 @@ export default function AssistPage() {
                         <div className="flex-1 min-w-0 pt-1">
                           {/* Market Agent Card — inline expanding panel */}
                           {/* Prediction Engine Card */}
-                          {message.isWeather && message.weatherPrompt ? (
+                          {message.isLocationMap && message.mapPrompt ? (
+                            <MapCard prompt={message.mapPrompt} location={message.mapLocation} destination={message.mapDestination} />
+                          ) : message.isWeather && message.weatherPrompt ? (
                             <WeatherCard prompt={message.weatherPrompt} location={message.weatherLocation} />
                           ) : message.isPrediction && message.predictionPrompt ? (
                             <PredictionCard prompt={message.predictionPrompt} />
