@@ -271,9 +271,9 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
     <div
       className="rounded-2xl border border-white/[0.08] overflow-hidden relative"
       style={{
-        perspective: "1800px",
-        background: "linear-gradient(180deg, rgba(18,41,30,0.4) 0%, rgba(4,10,6,0.75) 100%)",
-        backdropFilter: "blur(28px)",
+        perspective: "1400px",
+        background: "linear-gradient(180deg, rgba(8,20,14,0.55) 0%, rgba(2,6,4,0.9) 100%)",
+        backdropFilter: "blur(24px)",
       }}
     >
       <style>{LEAFLET_HIDE_CSS}</style>
@@ -304,10 +304,10 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
           <div
             className="rounded-xl overflow-hidden border border-white/[0.08] relative"
             style={{
-              height: "280px",
-              transform: "rotateX(6deg)",
+              height: "320px",
+              transform: "rotateX(3deg)",
               transformStyle: "preserve-3d",
-              boxShadow: "0 26px 60px rgba(0,0,0,0.5), 0 12px 40px rgba(16,185,129,0.18), 0 0 0 1px rgba(255,255,255,0.06)",
+              boxShadow: "0 22px 55px rgba(0,0,0,0.55), 0 10px 32px rgba(16,185,129,0.14), 0 0 0 1px rgba(255,255,255,0.05)",
             }}
           >
             <MapContainer
@@ -316,11 +316,11 @@ export function MapCard({ prompt, location, destination, onContextResolved }: Ma
               scrollWheelZoom={true}
               attributionControl={false}
               zoomControl={true}
-              style={{ height: "100%", width: "100%", background: "#e9edf5" }}
+              style={{ height: "100%", width: "100%", background: "#050708" }}
               ref={mapRef}
             >
               <TileLayer
-                url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+                url="https://stamen-tiles.a.ssl.fastly.net/toner/{z}/{x}/{y}.png"
               />
               {data.userLocation && (
                 <Marker position={[data.userLocation.lat, data.userLocation.lng]} icon={userIcon}>
