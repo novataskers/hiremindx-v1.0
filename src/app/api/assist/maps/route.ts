@@ -165,11 +165,11 @@ async function searchNearby(
   const radius = 5000; // meters — wider for suburban coverage
   const tags = resolvePOITags(queryType);
 
-  // Search nodes, ways, and relations; use `out center` to get center coords for ways/relations
+  // Search nodes, ways, and relations via nwr shorthand; use `out center` for ways/relations
   const tagQueries = tags
-    .map((t) => `node(around:${radius},${lat},${lng})[${t}];way(around:${radius},${lat},${lng})[${t}];relation(around:${radius},${lat},${lng})[${t}];`)
+    .map((t) => `nwr(around:${radius},${lat},${lng})[${t}];`)
     .join("");
-  const overpassQuery = `[out:json][timeout:25];(${tagQueries});out body center;`;
+  const overpassQuery = `[out:json][timeout:25];(${tagQueries});out center;`;
 
   try {
     const res = await fetch("https://overpass-api.de/api/interpreter", {
@@ -183,16 +183,20 @@ async function searchNearby(
       .filter((e: any) => {
         const elLat = e.lat ?? e.center?.lat;
         const elLon = e.lon ?? e.center?.lon;
-        return elLat && elLon && e.tags?.name;
+        return elLat && elLon;
       })
       .map((e: any) => {
         const elLat = e.lat ?? e.center?.lat;
         const elLon = e.lon ?? e.center?.lon;
+        const tagType = e.tags.amenity || e.tags.leisure || e.tags.shop || e.tags.tourism || e.tags.railway || e.tags.highway || null;
+        const fallbackName = tagType
+          ? "Unnamed " + tagType.replace(/_/g, " ").replace(/^\w/, (c: string) => c.toUpperCase())
+          : "Unnamed Place";
         return {
-          name: e.tags.name,
+          name: e.tags.name || fallbackName,
           lat: elLat,
           lng: elLon,
-          type: e.tags.amenity || e.tags.leisure || e.tags.shop || e.tags.tourism || e.tags.railway || e.tags.highway || "place",
+          type: tagType || "place",
           address: [e.tags["addr:street"], e.tags["addr:housenumber"], e.tags["addr:city"]].filter(Boolean).join(", ") || undefined,
           distance: Math.round(haversineKm(lat, lng, elLat, elLon) * 1000),
         };
