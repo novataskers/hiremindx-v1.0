@@ -973,10 +973,7 @@ export default function AssistPage() {
 
       // Weather intent — triggers rich weather card
       if (isWeatherIntent(userMessage) && !isOutreachIntent(userMessage) && !shouldUseCanvas) {
-        let weatherLoc = userLocation;
-        if (!weatherLoc) {
-          weatherLoc = await requestUserLocation();
-        }
+        const weatherLoc = await requestUserLocation();
         const weatherMsg: Message = {
           id: assistantMsgId,
           role: "assistant",

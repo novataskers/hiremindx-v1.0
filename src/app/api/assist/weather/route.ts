@@ -86,7 +86,8 @@ export async function POST(req: NextRequest) {
     let longitude = lng;
 
     // Default to Dhaka if no location provided
-    if (!latitude || !longitude) {
+    const hasProvidedLocation = !!(lat && lng);
+    if (!hasProvidedLocation) {
       latitude = 23.8103;
       longitude = 90.4125;
     }
@@ -161,7 +162,7 @@ export async function POST(req: NextRequest) {
       hourly: hourlyForecast,
       daily: dailyForecast,
       recommendation,
-      locationName: "Current Location",
+      locationName: hasProvidedLocation ? "Current Location" : "Default: Dhaka",
     });
   } catch (e: any) {
     console.error("Weather API error:", e);
