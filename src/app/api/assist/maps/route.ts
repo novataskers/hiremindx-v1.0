@@ -99,27 +99,75 @@ async function getRoute(
   return results;
 }
 
+// ─── POI Type Map → Overpass tag queries ─────────────────────────────────────
+const POI_MAP: Record<string, string[]> = {
+  cafe: ["amenity=cafe"],
+  coffee: ["amenity=cafe"],
+  restaurant: ["amenity=restaurant", "amenity=fast_food"],
+  food: ["amenity=restaurant", "amenity=fast_food"],
+  hospital: ["amenity=hospital"],
+  clinic: ["amenity=clinic", "amenity=doctors"],
+  medical: ["amenity=hospital", "amenity=clinic", "amenity=doctors"],
+  pharmacy: ["amenity=pharmacy"],
+  "swimming pool": ["leisure=swimming_pool", "sport=swimming"],
+  pool: ["leisure=swimming_pool", "sport=swimming"],
+  gym: ["leisure=fitness_centre"],
+  fitness: ["leisure=fitness_centre"],
+  hotel: ["tourism=hotel", "tourism=guest_house", "tourism=hostel"],
+  atm: ["amenity=atm"],
+  bank: ["amenity=bank"],
+  "gas station": ["amenity=fuel"],
+  petrol: ["amenity=fuel"],
+  fuel: ["amenity=fuel"],
+  gas: ["amenity=fuel"],
+  park: ["leisure=park", "amenity=park"],
+  "bus stop": ["highway=bus_stop", "amenity=bus_station"],
+  bus: ["highway=bus_stop", "amenity=bus_station"],
+  "train station": ["railway=station"],
+  train: ["railway=station"],
+  metro: ["railway=station", "station=subway"],
+  subway: ["railway=station", "station=subway"],
+  mosque: ["amenity=place_of_worship", "religion=muslim"],
+  church: ["amenity=place_of_worship", "religion=christian"],
+  temple: ["amenity=place_of_worship"],
+  school: ["amenity=school"],
+  university: ["amenity=university"],
+  college: ["amenity=college"],
+  library: ["amenity=library"],
+  cinema: ["amenity=cinema"],
+  theater: ["amenity=theatre"],
+  mall: ["shop=mall"],
+  supermarket: ["shop=supermarket"],
+  grocery: ["shop=supermarket", "shop=convenience"],
+  bakery: ["shop=bakery"],
+  police: ["amenity=police"],
+  "post office": ["amenity=post_office"],
+  store: ["shop=*"],
+  shop: ["shop=*"],
+  places: ["amenity=*"],
+};
+
+function resolvePOITags(queryType: string): string[] {
+  const lower = queryType.toLowerCase().trim();
+  // Try exact match first
+  if (POI_MAP[lower]) return POI_MAP[lower];
+  // Try partial match
+  for (const [key, tags] of Object.entries(POI_MAP)) {
+    if (lower.includes(key)) return tags;
+  }
+  return ["amenity=restaurant"]; // default
+}
+
 // ─── Nearby places via Overpass API ──────────────────────────────────────────
 async function searchNearby(
   lat: number, lng: number, queryType: string
 ): Promise<{ name: string; lat: number; lng: number; type: string; address?: string; distance?: number }[]> {
-  const radius = 1000; // meters
-  let amenity = "";
-  const lower = queryType.toLowerCase();
-  if (lower.includes("coffee") || lower.includes("cafe")) amenity = "cafe";
-  else if (lower.includes("restaurant") || lower.includes("food")) amenity = "restaurant";
-  else if (lower.includes("hospital") || lower.includes("clinic") || lower.includes("medical")) amenity = "hospital";
-  else if (lower.includes("pharmacy")) amenity = "pharmacy";
-  else if (lower.includes("train") || lower.includes("metro") || lower.includes("subway")) amenity = "subway_entrance";
-  else if (lower.includes("bus")) amenity = "bus_station";
-  else if (lower.includes("gas") || lower.includes("petrol")) amenity = "fuel";
-  else if (lower.includes("atm")) amenity = "atm";
-  else if (lower.includes("hotel")) amenity = "hotel";
-  else if (lower.includes("store") || lower.includes("shop")) amenity = "shop";
-  else if (lower.includes("park")) amenity = "park";
-  else amenity = "restaurant"; // default fallback
+  const radius = 1500; // meters — expanded radius for better coverage
+  const tags = resolvePOITags(queryType);
 
-  const overpassQuery = `[out:json];node(around:${radius},${lat},${lng})[amenity=${amenity}];out body;`;
+  const tagQueries = tags.map((t) => `node(around:${radius},${lat},${lng})[${t}];`).join("");
+  const overpassQuery = `[out:json];${tagQueries}out body;`;
+
   try {
     const res = await fetch("https://overpass-api.de/api/interpreter", {
       method: "POST",
@@ -134,12 +182,12 @@ async function searchNearby(
         name: e.tags.name,
         lat: e.lat,
         lng: e.lon,
-        type: e.tags.amenity || e.tags.shop || "place",
+        type: e.tags.amenity || e.tags.leisure || e.tags.shop || e.tags.tourism || e.tags.railway || e.tags.highway || "place",
         address: [e.tags["addr:street"], e.tags["addr:housenumber"], e.tags["addr:city"]].filter(Boolean).join(", ") || undefined,
         distance: Math.round(haversineKm(lat, lng, e.lat, e.lon) * 1000),
       }))
       .sort((a: any, b: any) => (a.distance || 0) - (b.distance || 0))
-      .slice(0, 6);
+      .slice(0, 8);
     return elements;
   } catch (err) { console.error("Overpass error:", err); }
   return [];
@@ -154,27 +202,141 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// ─── Text cleanup helpers ────────────────────────────────────────────────────
+const TRAILING_JUNK = [
+  /\s+from\s+me\b/gi, /\s+to\s+me\b/gi, /\s+beside\s+me\b/gi,
+  /\s+near\s+me\b/gi, /\s+around\s+me\b/gi, /\s+close\s+to\s+me\b/gi,
+  /\s+via\s+\w+/gi, /\s+by\s+(?:car|bus|walk|walking|bike|cycle|train|metro)/gi,
+  /\s+to\s+reach\s+me\b/gi, /\s+to\s+get\s+to\s+me\b/gi,
+  /\?/g,
+];
+
+function cleanText(text: string): string {
+  let t = text.trim();
+  TRAILING_JUNK.forEach((rx) => { t = t.replace(rx, ""); });
+  return t.trim();
+}
+
+function hasKeyword(text: string, keywords: string[]): boolean {
+  const lower = text.toLowerCase();
+  return keywords.some((k) => lower.includes(k.toLowerCase()));
+}
+
+function extractAfterPrefix(text: string, prefixes: string[]): string | null {
+  const lower = text.toLowerCase();
+  for (const prefix of prefixes) {
+    const idx = lower.indexOf(prefix.toLowerCase());
+    if (idx !== -1) {
+      const extracted = text.slice(idx + prefix.length).trim();
+      if (extracted) return extracted;
+    }
+  }
+  return null;
+}
+
+function extractPOI(text: string): string | null {
+  const lower = text.toLowerCase();
+  // Patterns that precede a POI noun
+  const poiPrefixes = [
+    "nearest ", "closest ", "find me a ", "find me an ", "find me the ",
+    "find a ", "find an ", "find the ", "is there a ", "is there an ",
+    "where is the nearest ", "where's the nearest ", "where is the closest ", "where's the closest ",
+    "show me the nearest ", "show me the closest ",
+    "look for a ", "look for an ", "look for the ",
+    "search for a ", "search for an ", "search for the ",
+    "find nearby ", "find near me ",
+  ];
+  for (const prefix of poiPrefixes) {
+    const idx = lower.indexOf(prefix);
+    if (idx !== -1) {
+      let rest = text.slice(idx + prefix.length).trim();
+      rest = cleanText(rest);
+      // Stop at first conjunction/preposition that isn't part of the noun
+      const stopWords = /\s+(?:near|beside|around|close to|from|to|and|or)\s+/i;
+      const match = rest.match(stopWords);
+      if (match && match.index !== undefined) {
+        rest = rest.slice(0, match.index).trim();
+      }
+      if (rest) return rest;
+    }
+  }
+  // Fallback: if text contains "nearest" or "closest" but no clear prefix matched,
+  // grab the word right after it
+  const fallback = lower.match(/(?:nearest|closest)\s+(.+?)(?:\s+near|\s+beside|\s+around|\?|$)/);
+  if (fallback) return cleanText(fallback[1]);
+  return null;
+}
+
 // ─── Detect what the user wants ──────────────────────────────────────────────
 function classifyQuery(prompt: string): { type: "current-location" | "nearby" | "directions" | "distance"; destination?: string; poiType?: string } {
   const lower = prompt.toLowerCase();
 
-  if (/\bwhere\s+(am\s+i|is\s+my\s+location|am\s+i\s+now)\b/.test(lower) || /\bshow\s+(me\s+)?my\s+location\b/.test(lower)) {
+  // 1. Pure "where am I" queries
+  if (hasKeyword(lower, ["where am i", "my location", "where am i now", "show my location", "show me my location", "what's my location", "what is my location"])) {
     return { type: "current-location" };
   }
 
-  // Directions / route
-  const dirMatch = lower.match(/(?:directions?\s+(?:to\s+)?|route\s+(?:to\s+)?|navigate\s+(?:to\s+)?|how\s+(?:do\s+i|to)\s+(?:get|go)\s+(?:to\s+)?)(.+?)(?:\?|$)/i);
-  if (dirMatch) return { type: "directions", destination: dirMatch[1].trim() };
+  // 2. Directions / route / best way to reach
+  const dirPrefixes = [
+    "directions to", "how to get to", "how do i get to", "how do i go to",
+    "route to", "navigate to", "show me the way to", "best way to reach",
+    "best way to get to", "best way to go to", "how can i reach",
+    "how can i get to", "how can i go to",
+  ];
+  if (hasKeyword(lower, dirPrefixes)) {
+    const dest = extractAfterPrefix(prompt, dirPrefixes);
+    if (dest) return { type: "directions", destination: cleanText(dest) };
+  }
 
-  // Distance / how far
-  const distMatch = lower.match(/(?:how\s+far\s+(?:is|am\s+i)\s+(?:from\s+)?|distance\s+(?:to|from)\s+)(.+?)(?:\?|$)/i);
-  if (distMatch) return { type: "distance", destination: distMatch[1].trim() };
+  // 3. Distance / how far
+  const distPrefixes = [
+    "how far is", "how far am i from", "how far from me is", "distance to", "distance from",
+  ];
+  if (hasKeyword(lower, distPrefixes)) {
+    const dest = extractAfterPrefix(prompt, distPrefixes);
+    if (dest) return { type: "distance", destination: cleanText(dest) };
+  }
 
-  // Nearby / nearest / find
-  const nearbyMatch = lower.match(/(?:nearest|closest|find\s+nearby|find\s+near\s+me|what['\s]+(?:s|is)\s+near(?:by|by\s+me)?)\s*(.+?)?(?:\?|$)/i);
-  if (nearbyMatch) return { type: "nearby", poiType: nearbyMatch[1]?.trim() || "places" };
+  // 4. Travel time / how long / how much time
+  const timePrefixes = [
+    "how long will it take to reach", "how long will it take to get to", "how long will it take to go to",
+    "how much time to reach", "how much time to get to", "how much time to go to",
+    "how long to reach", "how long to get to", "how long to go to",
+    "how much time will it take for", "how long will it take for",
+    "time to reach", "time to get to", "time to go to",
+  ];
+  if (hasKeyword(lower, timePrefixes)) {
+    const dest = extractAfterPrefix(prompt, timePrefixes);
+    if (dest) {
+      // Sometimes the structure is "how much time will it take for Dhaka to reach me"
+      // We want "Dhaka" not "Dhaka to reach me"
+      let cleaned = cleanText(dest);
+      // Remove trailing "to reach me", "to get to me", etc.
+      cleaned = cleaned.replace(/\s+to\s+(?:reach|get\s+to|go\s+to)\s+me\b/gi, "").trim();
+      if (cleaned) return { type: "directions", destination: cleaned };
+    }
+  }
 
-  // Generic location query
+  // 5. Nearby / nearest / find POI
+  const nearbyTriggers = [
+    "nearest", "closest", "nearby", "near me", "around me", "beside me", "close to me",
+    "find nearby", "find near me", "is there a", "is there an",
+    "where is the nearest", "where's the nearest", "where is the closest", "where's the closest",
+    "show me the nearest", "show me the closest",
+    "look for", "search for",
+  ];
+  if (hasKeyword(lower, nearbyTriggers)) {
+    const poi = extractPOI(prompt);
+    if (poi) return { type: "nearby", poiType: poi };
+    return { type: "nearby", poiType: "places" };
+  }
+
+  // 6. Fallback: if the message contains a known place name but none of the above matched,
+  // try to geocode the whole prompt as a destination (last resort)
+  if (lower.length < 60 && !lower.match(/\b(what|how|where|when|why|who|is|are|can|do|does|will|would|should|could)\b/)) {
+    return { type: "directions", destination: cleanText(prompt) };
+  }
+
   return { type: "current-location" };
 }
 
