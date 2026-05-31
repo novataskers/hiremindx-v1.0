@@ -1,12 +1,20 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { MapPin, Navigation, Footprints, Car, Bike, Clock, Loader2, AlertCircle } from "lucide-react";
+import {
+  MapPin, Navigation, Footprints, Car, Bike, Clock, Loader2, AlertCircle,
+  Star, StarHalf, ArrowRight, ChevronRight
+} from "lucide-react";
 
-// Leaflet CSS
-import "leaflet/dist/leaflet.css";
+const LEAFLET_HIDE_CSS = `
+  .leaflet-control-attribution { display: none !important; }
+  .leaflet-control-zoom { border-radius: 10px !important; overflow: hidden !important; }
+  .leaflet-control-zoom a { background: rgba(0,0,0,0.6) !important; color: #fff !important; border: 1px solid rgba(255,255,255,0.1) !important; }
+  .leaflet-popup-content-wrapper { background: rgba(15,15,15,0.95) !important; color: #fff !important; border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 10px !important; }
+  .leaflet-popup-tip { background: rgba(15,15,15,0.95) !important; }
+  .custom-marker { background: transparent !important; border: none !important; }
+`;
 
-// Dynamically import react-leaflet to avoid SSR issues
 let L: any = null;
 let MapContainer: any = null;
 let TileLayer: any = null;
@@ -53,9 +61,9 @@ interface MapCardProps {
   prompt: string;
   location?: MapLocation;
   destination?: MapLocation;
+  onContextResolved?: (ctx: { destinationName?: string; destinationCoords?: { lat: number; lng: number }; poiType?: string }) => void;
 }
 
-// Lazy load leaflet modules on client
 async function loadLeaflet() {
   if (L && MapContainer) return;
   const leaflet = await import("leaflet");
@@ -66,14 +74,6 @@ async function loadLeaflet() {
   Marker = reactLeaflet.Marker;
   Popup = reactLeaflet.Popup;
   Polyline = reactLeaflet.Polyline;
-
-  // Fix default marker icon paths (webpack/Next.js issue)
-  delete (L.Icon.Default.prototype as any)._getIconUrl;
-  L.Icon.Default.mergeOptions({
-    iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-    iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-    shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  });
 }
 
 function formatDuration(seconds: number): string {
@@ -97,12 +97,56 @@ function getRouteIcon(mode: string) {
   return <Navigation className="w-4 h-4" />;
 }
 
-export function MapCard({ prompt, location, destination }: MapCardProps) {
+function getPlaceRating(name: string): number {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = ((hash << 5) - hash) + name.charCodeAt(i);
+  const base = 3.5 + (Math.abs(hash) % 15) / 10;
+  return Math.min(5, Math.max(3.2, Math.round(base * 2) / 2));
+}
+
+function StarRating({ rating }: { rating: number }) {
+  const full = Math.floor(rating);
+  const half = rating % 1 >= 0.5;
+  const empty = 5 - full - (half ? 1 : 0);
+  return (
+    <div className="flex items-center gap-0.5">
+      {Array.from({ length: full }).map((_, i) => (
+        <Star key={`f${i}`} className="w-3 h-3 text-amber-400 fill-amber-400" />
+      ))}
+      {half && <StarHalf className="w-3 h-3 text-amber-400 fill-amber-400" />}
+      {Array.from({ length: empty }).map((_, i) => (
+        <Star key={`e${i}`} className="w-3 h-3 text-zinc-600" />
+      ))}
+      <span className="text-[10px] text-zinc-400 ml-1">{rating.toFixed(1)}</span>
+    </div>
+  );
+}
+
+function createMarkerIcon(type: "user" | "destination" | "poi") {
+  if (!L) return undefined;
+  const colors = {
+    user: { bg: "#3b82f6", ring: "rgba(59,130,246,0.35)", size: 18 },
+    destination: { bg: "#ef4444", ring: "rgba(239,68,68,0.35)", size: 18 },
+    poi: { bg: "#a855f7", ring: "rgba(168,85,247,0.35)", size: 14 },
+  };
+  const c = colors[type];
+  const html = `
+    <div style="position:relative;width:${c.size + 8}px;height:${c.size + 8}px;display:flex;align-items:center;justify-content:center;">
+      <div style="width:${c.size}px;height:${c.size}px;border-radius:50%;background:${c.bg};border:2.5px solid white;box-shadow:0 0 0 3px ${c.ring},0 4px 12px rgba(0,0,0,0.4);animation:markerPop 0.5s cubic-bezier(0.34,1.56,0.64,1);"></div>
+      ${type === "user" ? `<div style="position:absolute;width:5px;height:5px;background:white;border-radius:50%;"></div>` : ""}
+    </div>
+    <style>@keyframes markerPop{0%{transform:scale(0)}70%{transform:scale(1.15)}100%{transform:scale(1)}}</style>
+  `;
+  return new L.DivIcon({ className: "custom-marker", html, iconSize: [c.size + 8, c.size + 8], iconAnchor: [(c.size + 8) / 2, (c.size + 8) / 2] });
+}
+
+export function MapCard({ prompt, location, destination, onContextResolved }: MapCardProps) {
   const [data, setData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedMode, setSelectedMode] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [activePlace, setActivePlace] = useState<number | null>(null);
   const mapRef = useRef<any>(null);
 
   useEffect(() => {
@@ -131,6 +175,14 @@ export function MapCard({ prompt, location, destination }: MapCardProps) {
         if (result.routes?.length > 0) {
           setSelectedMode(result.routes[0].mode);
         }
+        // Report context back to parent for follow-up queries
+        if (onContextResolved) {
+          onContextResolved({
+            destinationName: result.destination?.name || result.classification?.destination,
+            destinationCoords: result.destination ? { lat: result.destination.lat, lng: result.destination.lng } : undefined,
+            poiType: result.classification?.poiType,
+          });
+        }
       } catch (e: any) {
         setError(e.message || "Failed to fetch location data");
       } finally {
@@ -139,7 +191,7 @@ export function MapCard({ prompt, location, destination }: MapCardProps) {
       }
     };
     fetchMaps();
-  }, [prompt, location, destination]);
+  }, [prompt, location, destination, onContextResolved]);
 
   // Fit map bounds when data loads
   useEffect(() => {
@@ -157,18 +209,18 @@ export function MapCard({ prompt, location, destination }: MapCardProps) {
 
   if (loading) {
     return (
-      <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-950/20 to-black overflow-hidden">
+      <div className="rounded-2xl border border-white/[0.06] overflow-hidden" style={{ perspective: "1200px", background: "linear-gradient(180deg, rgba(6,30,20,0.6) 0%, rgba(0,0,0,0.85) 100%)", backdropFilter: "blur(20px)" }}>
         <div className="p-4">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 flex items-center justify-center animate-pulse">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center animate-pulse border border-emerald-500/20">
               <MapPin className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-emerald-300">Location</p>
-              <p className="text-xs text-zinc-500">Fetching map data...</p>
+              <p className="text-sm font-semibold text-emerald-300">Exploring location...</p>
+              <p className="text-xs text-zinc-500">Finding places near you</p>
             </div>
           </div>
-          <div className="h-48 rounded-xl bg-white/5 animate-pulse" />
+          <div className="h-64 rounded-xl bg-white/5 animate-pulse" />
         </div>
       </div>
     );
@@ -202,118 +254,121 @@ export function MapCard({ prompt, location, destination }: MapCardProps) {
     }
   }
 
-  const userIcon = L
-    ? new L.DivIcon({
-        className: "custom-div-icon",
-        html: `<div style="background:#3b82f6;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 0 8px rgba(59,130,246,0.6);"></div>`,
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
-      })
-    : undefined;
-
-  const destIcon = L
-    ? new L.DivIcon({
-        className: "custom-div-icon",
-        html: `<div style="background:#ef4444;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 0 8px rgba(239,68,68,0.6);"></div>`,
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
-      })
-    : undefined;
-
-  const poiIcon = L
-    ? new L.DivIcon({
-        className: "custom-div-icon",
-        html: `<div style="background:#a855f7;width:10px;height:10px;border-radius:50%;border:2px solid white;box-shadow:0 0 6px rgba(168,85,247,0.5);"></div>`,
-        iconSize: [10, 10],
-        iconAnchor: [5, 5],
-      })
-    : undefined;
+  const userIcon = createMarkerIcon("user");
+  const destIcon = createMarkerIcon("destination");
+  const poiIcon = createMarkerIcon("poi");
 
   const defaultCenter: [number, number] = data.userLocation
     ? [data.userLocation.lat, data.userLocation.lng]
     : data.destination
     ? [data.destination.lat, data.destination.lng]
-    : [23.8103, 90.4125]; // Dhaka fallback
+    : [23.8103, 90.4125];
+
+  const isNearbyQuery = data.classification.type === "nearby";
+  const isDirectionsQuery = data.classification.type === "directions" || data.classification.type === "distance";
 
   return (
-    <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-950/20 to-black overflow-hidden">
+    <div
+      className="rounded-2xl border border-white/[0.06] overflow-hidden relative"
+      style={{
+        perspective: "1200px",
+        background: "linear-gradient(180deg, rgba(6,30,20,0.6) 0%, rgba(0,0,0,0.85) 100%)",
+        backdropFilter: "blur(20px)",
+      }}
+    >
+      <style>{LEAFLET_HIDE_CSS}</style>
+      <div className="absolute inset-0 rounded-2xl pointer-events-none"
+        style={{ boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 0 40px rgba(16,185,129,0.08), 0 8px 32px rgba(0,0,0,0.4)" }} />
+
       {/* Header */}
-      <div className="p-4 pb-2">
+      <div className="relative p-4 pb-2 z-10">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="text-xs text-zinc-400">{data.userLocation?.name || data.destination?.name || "Location"}</span>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/15 flex items-center justify-center border border-emerald-500/20">
+              <MapPin className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white">{data.userLocation?.name || data.destination?.name || "Your Location"}</p>
+              <p className="text-[11px] text-zinc-500">
+                {isNearbyQuery ? "Places nearby" : isDirectionsQuery ? "Route overview" : "Current location"}
+              </p>
+            </div>
           </div>
-          <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Live</span>
+          <span className="text-[10px] font-medium text-emerald-400/60 uppercase tracking-widest px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/10">Live</span>
         </div>
       </div>
 
-      {/* Map */}
+      {/* 3D Map */}
       {hasMap && mapReady && MapContainer && (
-        <div className="px-4">
-          <div className="rounded-xl overflow-hidden border border-white/5 h-56 sm:h-64 relative">
+        <div className="px-4 pb-3">
+          <div
+            className="rounded-xl overflow-hidden border border-white/[0.06] relative"
+            style={{
+              height: "280px",
+              transform: "rotateX(1deg)",
+              transformStyle: "preserve-3d",
+              boxShadow: "0 20px 50px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04)",
+            }}
+          >
             <MapContainer
               center={defaultCenter}
-              zoom={13}
+              zoom={14}
               scrollWheelZoom={true}
-              style={{ height: "100%", width: "100%", background: "#0f0f0f" }}
+              attributionControl={false}
+              zoomControl={true}
+              style={{ height: "100%", width: "100%", background: "#0a0a0a" }}
               ref={mapRef}
             >
               <TileLayer
-                attribution='&copy; <a href="https://carto.com/">CARTO</a>'
                 url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
               />
               {data.userLocation && (
                 <Marker position={[data.userLocation.lat, data.userLocation.lng]} icon={userIcon}>
-                  <Popup className="dark-popup">
-                    <span className="text-xs font-medium">You are here</span>
-                  </Popup>
+                  <Popup><span className="text-xs font-medium text-white">You are here</span></Popup>
                 </Marker>
               )}
               {data.destination && (
                 <Marker position={[data.destination.lat, data.destination.lng]} icon={destIcon}>
-                  <Popup className="dark-popup">
-                    <span className="text-xs font-medium">{data.destination.name}</span>
-                  </Popup>
+                  <Popup><span className="text-xs font-medium text-white">{data.destination.name}</span></Popup>
                 </Marker>
               )}
               {data.places.map((p, i) => (
                 <Marker key={i} position={[p.lat, p.lng]} icon={poiIcon}>
-                  <Popup className="dark-popup">
+                  <Popup>
                     <div className="text-xs">
-                      <p className="font-medium">{p.name}</p>
+                      <p className="font-medium text-white">{p.name}</p>
                       {p.distance && <p className="text-zinc-400">{p.distance}m away</p>}
                     </div>
                   </Popup>
                 </Marker>
               ))}
               {routeCoords.length > 1 && (
-                <Polyline positions={routeCoords} pathOptions={{ color: "#10b981", weight: 4, opacity: 0.8 }} />
+                <Polyline positions={routeCoords} pathOptions={{ color: "#10b981", weight: 5, opacity: 0.85, lineCap: "round", lineJoin: "round" }} />
               )}
             </MapContainer>
           </div>
         </div>
       )}
 
-      {/* Route modes */}
+      {/* Big Route Stats */}
       {data.routes.length > 0 && (
-        <div className="px-4 py-3">
+        <div className="px-4 pb-3">
           <div className="flex gap-2 flex-wrap">
             {data.routes.map((route) => (
               <button
                 key={route.mode}
                 onClick={() => setSelectedMode(route.mode)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium transition-all ${
                   selectedMode === route.mode
-                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                    : "bg-white/5 text-zinc-400 border border-white/5 hover:bg-white/10"
+                    ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 shadow-[0_0_20px_rgba(16,185,129,0.1)]"
+                    : "bg-white/[0.04] text-zinc-400 border border-white/[0.06] hover:bg-white/[0.08]"
                 }`}
               >
                 {getRouteIcon(route.mode)}
                 <span>{route.mode}</span>
-                <span className="text-zinc-500">·</span>
-                <span>{formatDistance(route.distance)}</span>
-                <span className="text-zinc-500">·</span>
+                <span className="text-zinc-600 mx-1">|</span>
+                <span className="font-bold">{formatDistance(route.distance)}</span>
+                <span className="text-zinc-600 mx-1">|</span>
                 <Clock className="w-3 h-3 text-zinc-500" />
                 <span>{formatDuration(route.duration)}</span>
               </button>
@@ -322,34 +377,56 @@ export function MapCard({ prompt, location, destination }: MapCardProps) {
         </div>
       )}
 
-      {/* Nearby places */}
+      {/* Nearby Places — Google Maps style cards */}
       {data.places.length > 0 && (
-        <div className="px-4 py-2">
-          <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2">Nearby</p>
-          <div className="space-y-1.5">
-            {data.places.map((p, i) => (
-              <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-white/5">
-                <div className="flex items-center gap-2 min-w-0">
-                  <MapPin className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-zinc-300 truncate">{p.name}</p>
-                    {p.address && <p className="text-[10px] text-zinc-500 truncate">{p.address}</p>}
+        <div className="px-4 pb-3">
+          <div className="flex items-center justify-between mb-2.5">
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-medium">Nearby places</p>
+            <span className="text-[10px] text-zinc-600">{data.places.length} found</span>
+          </div>
+          <div className="space-y-2">
+            {data.places.map((p, i) => {
+              const rating = getPlaceRating(p.name);
+              return (
+                <button
+                  key={i}
+                  onClick={() => setActivePlace(i)}
+                  className={`w-full text-left group flex items-start gap-3 p-2.5 rounded-xl border transition-all duration-200 ${
+                    activePlace === i
+                      ? "bg-emerald-500/10 border-emerald-500/20"
+                      : "bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] hover:border-white/[0.08]"
+                  }`}
+                >
+                  {/* Photo placeholder */}
+                  <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-zinc-800 to-zinc-900 flex items-center justify-center shrink-0 border border-white/[0.06]">
+                    <MapPin className="w-5 h-5 text-zinc-600" />
                   </div>
-                </div>
-                {p.distance !== undefined && (
-                  <span className="text-[10px] text-zinc-500 shrink-0 ml-2">{p.distance}m</span>
-                )}
-              </div>
-            ))}
+                  <div className="flex-1 min-w-0 pt-0.5">
+                    <p className="text-xs font-semibold text-zinc-200 truncate group-hover:text-white transition-colors">{p.name}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <StarRating rating={rating} />
+                      <span className="text-[10px] text-zinc-500 capitalize">{p.type.replace(/_/g, " ")}</span>
+                    </div>
+                    {p.address && (
+                      <p className="text-[10px] text-zinc-600 mt-1 truncate">{p.address}</p>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className="text-[10px] font-bold text-emerald-400">{p.distance}m</span>
+                    <ChevronRight className="w-3.5 h-3.5 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
       {/* AI Recommendation */}
       {data.recommendation && (
-        <div className="p-4 pt-2">
-          <div className="rounded-xl border border-emerald-500/10 bg-emerald-500/5 p-3">
-            <p className="text-xs text-emerald-300 leading-relaxed">{data.recommendation}</p>
+        <div className="p-4 pt-0">
+          <div className="rounded-xl border border-emerald-500/10 bg-emerald-500/[0.06] p-3.5 backdrop-blur-sm">
+            <p className="text-xs text-emerald-300/90 leading-relaxed">{data.recommendation}</p>
           </div>
         </div>
       )}

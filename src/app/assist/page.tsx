@@ -404,7 +404,14 @@ function isLocationIntent(text: string): boolean {
     /\bdriving\s+(?:distance|time)\b/i.test(lower) ||
     // Generic map trigger
     /\bshow\s+me\s+on\s+a\s+map\b/i.test(lower) ||
-    /\bmap\s+(?:of|showing)\b/i.test(lower)
+    /\bmap\s+(?:of|showing)\b/i.test(lower) ||
+    // Follow-up pronouns when context exists ("how far is it?", "can I walk there?", "what about that place?")
+    /\bhow\s+far\s+(?:is|was)\s+it\b/i.test(lower) ||
+    /\bhow\s+long\s+(?:is|was|will)\s+it\b/i.test(lower) ||
+    /\bcan\s+i\s+(?:walk|drive|get|go)\s+(?:there|to\s+it)\b/i.test(lower) ||
+    /\bis\s+it\s+(?:far|close|near|walkable)\b/i.test(lower) ||
+    /\bwhat\s+about\s+(?:it|that|there|that\s+place)\b/i.test(lower) ||
+    /\btell\s+me\s+more\s+about\s+(?:it|that|there|that\s+place)\b/i.test(lower)
   );
 }
 
@@ -651,6 +658,9 @@ export default function AssistPage() {
 
   const isListeningRef = useRef(false);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
+
+  // Track last map destination for follow-up context ("how far is it?", "can I walk there?")
+  const lastMapContext = useRef<{ destinationName?: string; destinationCoords?: { lat: number; lng: number }; poiType?: string } | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
@@ -1019,22 +1029,40 @@ export default function AssistPage() {
 
       // Location / Maps intent — triggers rich map card
       if (isLocationIntent(userMessage) && !isOutreachIntent(userMessage) && !shouldUseCanvas) {
+        let resolvedPrompt = userMessage;
+        let resolvedDestination = undefined;
+
+        // If follow-up pronouns detected and we have previous context, inject it
+        const lowerMsg = userMessage.toLowerCase();
+        const isFollowUp = /\b(it|there|that|that place)\b/.test(lowerMsg) && !/\bto\s+\w+/.test(lowerMsg);
+        if (isFollowUp && lastMapContext.current?.destinationName) {
+          resolvedPrompt = `${userMessage} (referring to: ${lastMapContext.current.destinationName})`;
+          resolvedDestination = lastMapContext.current.destinationCoords
+            ? { ...lastMapContext.current.destinationCoords, name: lastMapContext.current.destinationName }
+            : undefined;
+        }
+
         const mapLoc = await requestUserLocation();
         const mapMsg: Message = {
           id: assistantMsgId,
           role: "assistant",
-          content: `[Map] ${userMessage}`,
+          content: `[Map] ${resolvedPrompt}`,
           timestamp: new Date(),
           isStreaming: false,
           isLocationMap: true,
-          mapPrompt: userMessage,
+          mapPrompt: resolvedPrompt,
           mapLocation: mapLoc || undefined,
+          mapDestination: resolvedDestination,
         };
+
+        // Store context for future follow-ups (sniff destination from the response later)
+        // For now, store what we can from the prompt itself
         setMessages(prev => {
           const next = [...prev, userMsg, mapMsg];
           setTimeout(() => saveCurrentSession(), 2000);
           return next;
         });
+
         setInput("");
         if (currentFiles.length > 0) deleteR2Files(currentFiles.map(f => f.url));
         setUploadedFiles([]);
@@ -1854,7 +1882,14 @@ export default function AssistPage() {
                           {/* Market Agent Card — inline expanding panel */}
                           {/* Prediction Engine Card */}
                           {message.isLocationMap && message.mapPrompt ? (
-                            <MapCard prompt={message.mapPrompt} location={message.mapLocation} destination={message.mapDestination} />
+                            <MapCard
+                              prompt={message.mapPrompt}
+                              location={message.mapLocation}
+                              destination={message.mapDestination}
+                              onContextResolved={(ctx) => {
+                                lastMapContext.current = ctx;
+                              }}
+                            />
                           ) : message.isWeather && message.weatherPrompt ? (
                             <WeatherCard prompt={message.weatherPrompt} location={message.weatherLocation} />
                           ) : message.isPrediction && message.predictionPrompt ? (
